@@ -1,0 +1,6 @@
+cargo:rustc-link-lib=static=cortex-m
+cargo:rustc-link-search=/home/rushnan-reaz/concept-os/app/stm32l476rg_demo/build/thumbv7em-none-eabihf/release/build/cortex-m-3fa42c3df3febd7d/out
+cargo:rustc-cfg=cortex_m
+cargo:rustc-cfg=armv7m
+cargo:rustc-cfg=armv7em
+cargo:rustc-cfg=has_fpu

@@ -1,0 +1,46 @@
+[component]
+id = 3
+version = 1
+priority = 10
+flags = ['START_AT_BOOT']
+min_ram = 1024
+
+[[regions]]
+base_address = '0x40004400'
+size = '0x400'
+attributes = [
+    'READ',
+    'WRITE',
+    'DEVICE',
+]
+
+[[regions]]
+base_address = '0x48000000'
+size = '0x400'
+attributes = [
+    'READ',
+    'WRITE',
+    'DEVICE',
+]
+
+[[regions]]
+base_address = '0x40020000'
+size = '0x400'
+attributes = [
+    'READ',
+    'WRITE',
+    'DEVICE',
+]
+
+[[interrupts]]
+irq = 16
+notification_mask = '0x00000002'
+
+[[interrupts]]
+irq = 38
+notification_mask = '0x00000001'
+
+[[dependencies]]
+component_id = 2
+min_version = 1
+max_version = 1
