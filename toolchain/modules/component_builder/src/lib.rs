@@ -44,6 +44,7 @@ fn build_component(
             "-C link-arg=--nmagic \
              -C link-arg=-T{}/link.x \
              -C link-arg=-q \
+             -Z unstable-options \
              -C panic=abort \
              -Z emit-stack-sizes \
              --emit=obj

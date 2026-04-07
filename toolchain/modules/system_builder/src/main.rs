@@ -189,6 +189,7 @@ MEMORY
             true => format!(
                 "-C link-arg=--nmagic \
                      -C link-arg=-T{}/kernel-link.x \
+                     -Z unstable-options \
                      -C panic=abort \
                      -Z emit-stack-sizes \
                      --emit=obj

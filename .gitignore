@@ -1,2 +1,6 @@
 .vscode
 target/
+everything.md
+everything2.md
+documentation/
+.venv/
