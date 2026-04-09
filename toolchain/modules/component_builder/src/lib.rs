@@ -45,6 +45,7 @@ fn build_component(
              -C link-arg=-T{}/link.x \
              -C link-arg=-q \
              -C panic=abort \
+             -Z unstable-options \
              -Z emit-stack-sizes \
              --emit=obj
             ",

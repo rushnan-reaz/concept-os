@@ -190,6 +190,7 @@ MEMORY
                 "-C link-arg=--nmagic \
                      -C link-arg=-T{}/kernel-link.x \
                      -C panic=abort \
+                     -Z unstable-options \
                      -Z emit-stack-sizes \
                      --emit=obj
                     ",

@@ -1,0 +1,3 @@
+cargo:rustc-link-search=/home/rushnan-reaz/concept-os/app/bthermo/build/thumbv7em-none-eabihf/release/build/stm32l476rg-b37d4b8ba83c4bf2/out
+cargo:rerun-if-changed=src/device/device.x
+cargo:rerun-if-changed=build.rs
