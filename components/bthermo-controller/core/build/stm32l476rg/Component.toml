@@ -1,0 +1,16 @@
+[component]
+id = 11
+version = 1
+priority = 20
+flags = ['START_AT_BOOT']
+min_ram = 2048
+
+[[dependencies]]
+component_id = 3
+min_version = 1
+max_version = 0
+
+[[dependencies]]
+component_id = 10
+min_version = 1
+max_version = 0

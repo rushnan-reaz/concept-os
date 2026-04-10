@@ -1,0 +1,29 @@
+[component]
+id = 10
+version = 1
+priority = 5
+flags = ['START_AT_BOOT']
+min_ram = 4096
+
+[[regions]]
+base_address = '0x48000400'
+size = '0x400'
+attributes = [
+    'READ',
+    'WRITE',
+    'DEVICE',
+]
+
+[[regions]]
+base_address = '0x40005400'
+size = '0x400'
+attributes = [
+    'READ',
+    'WRITE',
+    'DEVICE',
+]
+
+[[dependencies]]
+component_id = 2
+min_version = 1
+max_version = 1
