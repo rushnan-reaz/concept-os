@@ -759,23 +759,35 @@ fn setup_usart(usart: &device::usart1::RegisterBlock) -> Result<(), RCCError> {
 }
 
 #[cfg(any(target_board = "stm32f303re", target_board = "stm32l476rg"))]
-/// Write USART3 on GPIOC (pin 10,11)
+/// Write USART3 on GPIOC (pin 10,11) - past
+/// Write USART3 on GPIOB (pin 10,11) - current
 fn setup_gpio() -> Result<(), RCCError> {
     // TODO: the fact that we interact with GPIOC directly here is an expedient
     // hack, but control of the GPIOs should probably be centralized somewhere.
-    let gpioc = unsafe { &*device::GPIOC::ptr() };
-
+    // let gpioc = unsafe { &*device::GPIOC::ptr() };
+        let gpiob = unsafe { &*device::GPIOB::ptr() };
     // Turn on clock and leave reset
+
     let mut rcc = rcc_api::RCC::new(RCC.get_task_id());
-    rcc.enable_clock(rcc_api::Peripheral::GPIOC)?;
-    rcc.leave_reset(rcc_api::Peripheral::GPIOC)?;
+    
+    // rcc.enable_clock(rcc_api::Peripheral::GPIOC)?;
+    // rcc.leave_reset(rcc_api::Peripheral::GPIOC)?;
 
+        rcc.enable_clock(rcc_api::Peripheral::GPIOB)?;
+        rcc.leave_reset(rcc_api::Peripheral::GPIOB)?;
     // Setup Alternate Function 7
-    gpioc
-        .moder
-        .modify(|_, w| w.moder10().alternate().moder11().alternate());
-    gpioc.afrh.modify(|_, w| w.afrh10().af7().afrh11().af7());
 
+
+    // gpioc
+    //     .moder
+    //     .modify(|_, w| w.moder10().alternate().moder11().alternate());
+    // gpioc.afrh.modify(|_, w| w.afrh10().af7().afrh11().af7());
+
+
+        gpiob
+            .moder
+            .modify(|_, w| w.moder10().alternate().moder11().alternate());
+        gpiob.afrl.modify(|_, w| w.afrl10().af7().afrl11().af7());
     Ok(())
 }
 

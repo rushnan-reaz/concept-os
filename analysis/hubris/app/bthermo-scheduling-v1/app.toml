@@ -59,7 +59,7 @@ features = ["stm32l476rg", "log-itm", "multi-support"]
 priority = 15
 max-sizes = {flash = 16384, ram = 4096}
 stacksize = 2048
-uses = ["usart3", "gpioc", "dma1"]
+uses = ["usart3", "gpiob", "dma1"]
 start = true
 notifications = ["usart-irq", "dma-irq"]
 interrupts = {"usart3.irq" = "usart-irq", "dma1.irq3" = "dma-irq"}
