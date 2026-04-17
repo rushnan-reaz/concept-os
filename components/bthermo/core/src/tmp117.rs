@@ -75,7 +75,7 @@ impl TMP117 {
             // Convert it
             let raw_temp = i16::from_be_bytes(raw_data);
             // Store it
-            self.last_temp = (raw_temp as f32) * TMP117_RESOLUTION;
+            self.last_temp = ((raw_temp >> 4) as f32) * TMP117_RESOLUTION;
             self.last_update = now;
         }
         return Ok(self.last_temp);
