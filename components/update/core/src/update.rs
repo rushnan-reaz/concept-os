@@ -87,7 +87,9 @@ impl<'a> UpdateMethods<'a> {
     }
 
     pub fn deallocate(&mut self) {
-        self.storage.deallocate_block(self.memory_pointer).unwrap_lite();
+        self.storage
+            .deallocate_block(self.memory_pointer)
+            .unwrap_lite();
     }
 }
 

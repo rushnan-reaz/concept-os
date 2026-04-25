@@ -6,16 +6,15 @@
 //! Implementation of IPC operations on the virtual kernel task.
 
 use abi::{
-    FaultInfo, FaultSource, SchedState, UsageError,
-    HUBRIS_MAX_SUPPORTED_TASKS,
+    FaultInfo, FaultSource, SchedState, UsageError, HUBRIS_MAX_SUPPORTED_TASKS,
 };
 use flash_allocator::flash::FlashMethods;
 use unwrap_lite::UnwrapLite;
 
 use crate::err::UserError;
 use crate::log::sys_log;
-use crate::startup::{with_irq_table};
-use crate::structures::{load_component_at, TaskIndexes, self};
+use crate::startup::with_irq_table;
+use crate::structures::{self, load_component_at, TaskIndexes};
 use crate::task;
 use crate::task::{ArchState, NextTask, Task};
 use crate::umem::USlice;
@@ -196,7 +195,12 @@ fn restart_task(
     }
 
     // Restart pending tasks
-    task::restart_pending_tasks(task_list, task_map, other_task_index, old_identifier);
+    task::restart_pending_tasks(
+        task_list,
+        task_map,
+        other_task_index,
+        old_identifier,
+    );
 
     if target_id == caller_id {
         // Welp, they've restarted themselves. Best not return anything then.
@@ -342,7 +346,7 @@ fn activate_task(
     task_list: &mut [Task; HUBRIS_MAX_SUPPORTED_TASKS],
     task_map: &mut TaskIndexes,
     caller_id: u16,
-    caller_index: usize
+    caller_index: usize,
 ) -> Result<NextTask, UserError> {
     // If the task is mature, just ignore the call.
     // In this way, components that does not need the state can
@@ -360,9 +364,16 @@ fn activate_task(
     // Read the nominal id of the task
     let nominal_id = task_list[caller_index].descriptor().component_id();
     // Launch the activation procedure
-    let storage_woken = structures::activate_component(task_list, task_map, caller_index, nominal_id);
+    let storage_woken = structures::activate_component(
+        task_list,
+        task_map,
+        caller_index,
+        nominal_id,
+    );
     if storage_woken {
-        next_hint = NextTask::Specific(task_map.get_task_index(abi::STORAGE_ID).unwrap_lite());
+        next_hint = NextTask::Specific(
+            task_map.get_task_index(abi::STORAGE_ID).unwrap_lite(),
+        );
     }
     // Alert the task
     let task = &mut task_list[caller_index];
@@ -409,8 +420,7 @@ fn flash_write(
         )));
     }
     // Then extract the address
-    let address: u32 =
-        deserialize_message(&task_list[caller_index], address)?;
+    let address: u32 = deserialize_message(&task_list[caller_index], address)?;
 
     // Check the task can actually reference this location.
     // We threat this as a fault if something is not right
@@ -427,7 +437,8 @@ fn flash_write(
     let flash_methods = crate::arch::get_flash_interface();
     let response_code: u32;
     let mut next_task = NextTask::Same;
-    match flash_methods.write_timed(task_list, task_map, address, source_buffer) {
+    match flash_methods.write_timed(task_list, task_map, address, source_buffer)
+    {
         Ok(switch) => {
             response_code = 0;
             next_task = switch;
@@ -445,7 +456,7 @@ fn flash_flush_buffer(
     task_list: &mut [Task; HUBRIS_MAX_SUPPORTED_TASKS],
     _task_map: &mut TaskIndexes,
     caller_id: u16,
-    caller_index: usize
+    caller_index: usize,
 ) -> Result<NextTask, UserError> {
     // First validate this task. Only the storage task is allowed to perform these calls
     if caller_id != abi::STORAGE_ID {
@@ -482,8 +493,7 @@ fn flash_erase(
         )));
     }
     // Then extract the page number
-    let page_num: u16 =
-        deserialize_message(&task_list[caller_index], message)?;
+    let page_num: u16 = deserialize_message(&task_list[caller_index], message)?;
 
     // Now use the flash methods to perform this operation
     let flash_methods = crate::arch::get_flash_interface();
