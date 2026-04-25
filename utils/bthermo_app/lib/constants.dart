@@ -1,7 +1,7 @@
 // MQTT constants
 import 'package:flutter/material.dart';
 
-const MQTT_SERVER = '192.168.0.3';
+const MQTT_SERVER = '127.0.0.1';
 const MQTT_SERVER_PORT = 1883;
 const MQTT_USER = 'mqtt';
 const MQTT_PASSWD = 'mqtt';

@@ -7,5 +7,5 @@ build:
 	chmod +x ./update-tool-mqtt
 
 bluetooth_connect:
-	sudo rfcomm connect /dev/rfcomm0 98:D3:32:70:A0:CA 1 
-	# 00:22:02:01:46:45
+	sudo rfcomm connect /dev/rfcomm0 00:22:09:01:9E:A1 1 
+	
