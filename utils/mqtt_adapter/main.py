@@ -7,6 +7,7 @@ import asyncio as aio
 import argparse
 import sys
 import re
+import os
 
 from loguru import logger
 from src.utils.paths import configure_path
@@ -26,7 +27,9 @@ async def mqtt_loop(
     # Setup message handler
     async def _on_mqtt_data(topic: str, payload: bytes) -> None:
         # Read the channel id from the topic
-        match = re.match(f'{mqtt_root}/([^\/]+)\/in', topic)
+        
+        
+        match = re.match(rf"{re.escape(mqtt_root)}/([^/]+)/in$", topic)
         if match is None:
             logger.warning("Wrong topic structure")
             return
@@ -210,7 +213,7 @@ async def init(settings: Settings):
 
     # Try to connect to MQTT
     mqtt_client = MQTTConnector(
-        client_id="concept-os-adapter",
+        client_id=settings.get('mqtt/client_id', default_value=f"concept-os-adapter-{os.getpid()}"),
         will_topic=mqtt_root + "/available",
         will_offline_payload='0'
     )
@@ -272,7 +275,8 @@ def start():
     init_logger(settings)
 
     # Get asyncio loop and link start function
-    loop = aio.get_event_loop()
+    loop = aio.new_event_loop()
+    aio.set_event_loop(loop)
     loop.create_task(init(settings=settings))
 
     try:
@@ -281,6 +285,7 @@ def start():
     except KeyboardInterrupt:
         sys.exit(-1)
     finally:
+        aio.set_event_loop(None)
         loop.close()
 
 
