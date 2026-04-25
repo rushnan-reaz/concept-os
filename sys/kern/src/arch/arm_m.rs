@@ -800,8 +800,7 @@ unsafe extern "C" fn pendsv_entry() {
 
     // Safety: we're dereferencing the current task pointer, which we're
     // trusting the rest of this module to maintain correctly.
-    let current_id =
-        u16::from(unsafe { (*current).id() });
+    let current_id = u16::from(unsafe { (*current).id() });
 
     with_task_table(|task_list, task_map| {
         let current_index = task_map.get_task_index(current_id).unwrap_lite();
@@ -864,7 +863,9 @@ pub unsafe extern "C" fn DefaultHandler() {
                 // Now, post the notification and return the
                 // scheduling hint.
                 let n = task::NotificationSet(owner.notification);
-                let task_index = task_map.get_task_index(owner.task_id).expect("IRQ missing component");
+                let task_index = task_map
+                    .get_task_index(owner.task_id)
+                    .expect("IRQ missing component");
                 task_list[task_index].post(n)
             });
             if switch {
@@ -1192,12 +1193,14 @@ unsafe extern "C" fn handle_fault(
     // fault!)
     with_task_table(|task_list, task_map| {
         let index = task_map.get_task_index(id).unwrap_lite();
-        let next_index = match task::force_fault(task_list, task_map, index, fault)
-        {
-            task::NextTask::Specific(i) => i,
-            task::NextTask::Other => task::select(index, task_list, task_map),
-            task::NextTask::Same => index,
-        };
+        let next_index =
+            match task::force_fault(task_list, task_map, index, fault) {
+                task::NextTask::Specific(i) => i,
+                task::NextTask::Other => {
+                    task::select(index, task_list, task_map)
+                }
+                task::NextTask::Same => index,
+            };
 
         if next_index == index {
             panic!("attempt to return to Task #{} after fault", id);

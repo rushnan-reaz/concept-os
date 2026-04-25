@@ -381,7 +381,7 @@ impl Task {
         // setup all necessary steps
         if self.transfer_state_support {
             // Notify the bit of state transfer requested
-            sys_log!("Asking state transfer for {}", self.component_id);
+            // Note: do NOT use sys_log! here - runs in KIPC handler mode
             self.transfer_state_requested = true;
             self.post(NotificationSet(STATE_TRANSFER_REQUESTED_MASK));
             // Unblock the task if is waiting for a response from another task
@@ -405,7 +405,7 @@ impl Task {
                 _ => {}
             }
         } else {
-            sys_log!("Stopping task {}", self.component_id);
+            // Note: do NOT use sys_log! here - runs in KIPC handler mode
             // Stop the component otherwise
             self.state = TaskState::Faulted {
                 fault: FaultInfo::Injected(abi::TaskId(0)),

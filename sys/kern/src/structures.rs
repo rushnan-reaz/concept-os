@@ -435,7 +435,7 @@ pub struct TaskIndexes {
     /// This structure and the above one could be merged into a single one,
     /// but here are kept separated for simplicity
     valid_ordered_indexes: [usize; HUBRIS_MAX_SUPPORTED_TASKS],
-    valid_ordered_indexes_len: usize
+    valid_ordered_indexes_len: usize,
 }
 
 impl TaskIndexes {
@@ -444,7 +444,7 @@ impl TaskIndexes {
             hash: KHash::new(),
             indexes_mask: [false; HUBRIS_MAX_SUPPORTED_TASKS],
             valid_ordered_indexes: [0; HUBRIS_MAX_SUPPORTED_TASKS],
-            valid_ordered_indexes_len: 0
+            valid_ordered_indexes_len: 0,
         }
     }
 
@@ -477,8 +477,10 @@ impl TaskIndexes {
         if let Some(old_index) = self.get_task_index(old_id) {
             // Now, remove this association
             self.hash.remove(old_id).unwrap_lite();
+            //let _ = self.hash.remove(old_id);
             // Insert under the new id
             self.hash.insert(new_id, old_index).unwrap_lite();
+            //let _ = self.hash.insert(new_id, old_index);
             // No need to change the indexes_mask, as we are not changing index
             return Ok(());
         }
@@ -707,9 +709,7 @@ fn remove_task_from_system(
     if let Some(irq_map) = irq_map {
         for interrupt_num in 0..task.descriptor().num_interrupts() {
             let interrupt = task.descriptor().interrupt_nth(interrupt_num);
-            irq_map
-                .remove(interrupt.irq_num as u16)
-                .unwrap_lite();
+            irq_map.remove(interrupt.irq_num as u16).unwrap_lite();
         }
     }
     // Mark the corresponding block for removal
@@ -823,9 +823,7 @@ pub fn load_component_at(
                 let interrupt =
                     old_task.descriptor().interrupt_nth(interrupt_num);
                 crate::arch::disable_irq(interrupt.irq_num);
-                irq_map
-                    .remove(interrupt.irq_num as u16)
-                    .unwrap_lite();
+                irq_map.remove(interrupt.irq_num as u16).unwrap_lite();
             }
             // If the old component support it, now it can state transfer.
             // Otherwise is simply stopped.
@@ -914,7 +912,8 @@ pub fn revert_update(
         old_task.set_healthy_state(abi::SchedState::Runnable);
     }
     // Remove the new version
-    let storage_task_index = task_map.get_task_index(abi::STORAGE_ID).unwrap_lite();
+    let storage_task_index =
+        task_map.get_task_index(abi::STORAGE_ID).unwrap_lite();
     let storage_task = &mut task_list[storage_task_index];
     storage_task.post(NotificationSet(HUBRIS_STORAGE_ANALYZE_NOTIFICATION));
 }
@@ -952,9 +951,7 @@ pub fn activate_component(
         let tot_irqs = task.descriptor().num_interrupts();
         for interrupt_num in 0..tot_irqs {
             let interrupt = task.descriptor().interrupt_nth(interrupt_num);
-            let entry = irq_map
-                .get_mut(interrupt.irq_num as u16)
-                .unwrap_lite();
+            let entry = irq_map.get_mut(interrupt.irq_num as u16).unwrap_lite();
             entry.task_id = nominal_id;
         }
     });
@@ -962,7 +959,10 @@ pub fn activate_component(
     if let Some(old_id) = old_identifier {
         // Restart pending tasks
         crate::task::restart_pending_tasks(
-            task_list, task_map, caller_index, old_id,
+            task_list,
+            task_map,
+            caller_index,
+            old_id,
         );
         // Now is safe to schedule the old block for removal
         let storage_index =
