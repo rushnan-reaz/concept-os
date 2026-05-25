@@ -196,7 +196,7 @@ impl<'a, const LINKED_FLASH_ADDR: u32, const LINKED_SRAM_ADDR: u32, const BUFF_S
                     }
 
                     // We have everything we need. Just launch the relocation
-                    self.process_abs_reloc(next_reloc);
+                    self.process_abs_reloc(next_reloc)?;
                     // Now for sure something can be flushed. But continue with the iteration to allow flushing.
                     // For now, just mark this reloc as consumed
                     self.relocation_buffer.consume_relocation(0);
@@ -218,7 +218,7 @@ impl<'a, const LINKED_FLASH_ADDR: u32, const LINKED_SRAM_ADDR: u32, const BUFF_S
                         return Ok(()); // Wait for more data to come
                     }
                     // Fix both the relocations
-                    self.process_paired_reloc(next_reloc, paired_reloc);
+                    self.process_paired_reloc(next_reloc, paired_reloc)?;
                     // Mark both as completed
                     self.relocation_buffer.consume_relocation(0);
                     self.relocation_buffer.consume_relocation(paired_index);
@@ -242,20 +242,20 @@ impl<'a, const LINKED_FLASH_ADDR: u32, const LINKED_SRAM_ADDR: u32, const BUFF_S
         addr & 0xFF000000 == LINKED_SRAM_ADDR & 0xFF000000
     }
 
-    fn fix_address(&self, addr: u32) -> u32 {
+    fn fix_address(&self, addr: u32) -> Result<u32, ()> {
         if self.is_flash_addr(addr) {
-            return addr - LINKED_FLASH_ADDR + self.new_flash_base;
+            Ok(addr - LINKED_FLASH_ADDR + self.new_flash_base)
         } else if self.is_sram_addr(addr) {
-            return addr - LINKED_SRAM_ADDR + self.new_sram_base;
+            Ok(addr - LINKED_SRAM_ADDR + self.new_sram_base)
         } else {
-            panic!("Unknown memory area to relocate");
+            Err(())
         }
     }
 
     /**
      * Standard ABS relocations
      */
-    fn process_abs_reloc(&mut self, rel: Relocation) {
+    fn process_abs_reloc(&mut self, rel: Relocation) -> Result<(), ()> {
         // assert!(rel.get_type() == RelocationType::AbsAddress);
         // Compute offset
         let offset = rel.get_target_file_pos() - self.current_file_pos;
@@ -264,17 +264,18 @@ impl<'a, const LINKED_FLASH_ADDR: u32, const LINKED_SRAM_ADDR: u32, const BUFF_S
         self.working_buffer.read_into(offset, &mut addr_bytes);
         let linked_addr = u32::from_le_bytes(addr_bytes);
         // Compute new address
-        let new_addr_bytes = self.fix_address(linked_addr).to_le_bytes();
+        let new_addr_bytes = self.fix_address(linked_addr)?.to_le_bytes();
         // Write back address in the working buffer
         for i in 0..4usize {
             self.working_buffer.change_at(offset + i, new_addr_bytes[i]);
         }
+        Ok(())
     }
 
     /**
      * MOV relocations
      */
-    fn process_paired_reloc(&mut self, rel1: Relocation, rel2: Relocation) {
+    fn process_paired_reloc(&mut self, rel1: Relocation, rel2: Relocation) -> Result<(), ()> {
         let lower_rel;
         let upper_rel;
         // Here we could assume those relocation comes first MOVW then MOVT, but it's kept generic.
@@ -297,7 +298,7 @@ impl<'a, const LINKED_FLASH_ADDR: u32, const LINKED_SRAM_ADDR: u32, const BUFF_S
         let linked_addr = upper_linked << 16 | lower_linked;
 
         // Compute the new address
-        let new_addr = self.fix_address(linked_addr);
+        let new_addr = self.fix_address(linked_addr)?;
 
         // Generate the new instructions
         let new_lower = (new_addr & 0xFFFF) as u16;
@@ -308,6 +309,7 @@ impl<'a, const LINKED_FLASH_ADDR: u32, const LINKED_SRAM_ADDR: u32, const BUFF_S
         // Write back both
         self.write_mov(lower_mov_pos, new_encoded_lower);
         self.write_mov(upper_mov_pos, new_encoded_upper);
+        Ok(())
     }
 
     fn read_mov(&self, offset: usize) -> u32 {
@@ -361,13 +363,14 @@ enum RelocationType {
     MovT = 2,
 }
 
-impl From<u32> for RelocationType {
-    fn from(x: u32) -> Self {
+impl TryFrom<u32> for RelocationType {
+    type Error = ();
+    fn try_from(x: u32) -> Result<Self, ()> {
         match x {
-            0 => Self::AbsAddress,
-            1 => Self::MovW,
-            2 => Self::MovT,
-            _ => panic!("Relocation not supported!"),
+            0 => Ok(Self::AbsAddress),
+            1 => Ok(Self::MovW),
+            2 => Ok(Self::MovT),
+            _ => Err(()),
         }
     }
 }
@@ -413,8 +416,8 @@ impl<'a, const N: usize> RelocationBuff<N> {
         self.total_used_relocs += to_transfer;
         // Convert each point into a relocation and store it
         for i in 0..to_transfer {
-            self.buff.extend_from(&[Relocation::from(reloc_buff[i])]);
-            //assert_eq!(self.buff.extend_from(&[Relocation::from(reloc_buff[i])]), 1);
+            self.buff.extend_from(&[Relocation::try_from(reloc_buff[i])?]);
+            //assert_eq!(self.buff.extend_from(&[Relocation::try_from(reloc_buff[i])?]), 1);
         }
         return Ok(true);
     }
@@ -499,15 +502,16 @@ fn sign_extend(value: u32, bits: usize) -> isize {
     //       15 - 16 = -1
 }
 
-impl From<u32> for Relocation {
-    fn from(x: u32) -> Self {
+impl TryFrom<u32> for Relocation {
+    type Error = ();
+    fn try_from(x: u32) -> Result<Self, ()> {
         let paired_offset = sign_extend((x >> 24) & 0x1F, 5);
-        Self {
-            rel_type: RelocationType::from(x >> 30),
+        Ok(Self {
+            rel_type: RelocationType::try_from(x >> 30)?,
             paired_rel_offset: paired_offset,
             file_offset: x as usize & 0xFF_FFFF,
             consumed: false,
-        }
+        })
     }
 }
 

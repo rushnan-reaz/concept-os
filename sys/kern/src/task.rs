@@ -117,7 +117,6 @@ impl Task {
             };
         self.component_id = descriptor.component_id();
         self.descriptor = descriptor.clone();
-        self.region_table.clear();
         self.generation = 0;
         self.notifications = 0;
         self.data_section = data_section;
@@ -126,9 +125,13 @@ impl Task {
         self.transfer_state_support = false;
         self.transfer_state_requested = false;
         self.update_since = None;
-        // Append all the regions
-        for r in region_table {
-            self.region_table.push(*r).unwrap_lite();
+        // Copy region table directly (avoids iterator overhead in deep call chain)
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                region_table as *const KVec<RegionDescriptor, REGIONS_PER_TASK>,
+                &mut self.region_table as *mut KVec<RegionDescriptor, REGIONS_PER_TASK>,
+                1,
+            );
         }
     }
 
