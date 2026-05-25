@@ -11,7 +11,7 @@ use crate::{
 };
 use abi::{
     flash::BlockType, u32_from_le_bytes_raw, InterruptOwner, RegionAttributes,
-    RegionDescriptor, TaskDescriptor, TaskFlags, TaskId, HUBRIS_MAX_IRQS,
+    RegionDescriptor, SchedState, TaskDescriptor, TaskFlags, TaskId, HUBRIS_MAX_IRQS,
     HUBRIS_MAX_SUPPORTED_TASKS, REGIONS_PER_TASK,
 };
 use flash_allocator::flash::FlashBlock;
@@ -843,8 +843,15 @@ pub fn load_component_at(
             let task_index = res.unwrap_lite();
             // Initialize the task for update
             task_list[task_index].begin_update();
-            // Setup internal
+            // Force Stopped state until reinitialize completes, so the
+            // scheduler doesn't try to run a task with an uninitialized stack
+            task_list[task_index]
+                .set_healthy_state(SchedState::Stopped);
+            // Setup internal (stack frame, .data section, etc.)
             crate::arch::reinitialize(&mut task_list[task_index]);
+            // Now the task is fully initialized — make it schedulable
+            task_list[task_index]
+                .set_healthy_state(SchedState::Runnable);
             return Ok(task_index);
         }
         return Err(res.unwrap_err());

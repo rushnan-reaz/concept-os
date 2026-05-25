@@ -15,14 +15,24 @@ pub fn channel_flush_read(mqtt_in_consumer: &Receiver<u8>) {
 }
 
 pub fn channel_read(mqtt_in_consumer: &Receiver<u8>, buffer: &mut [u8]) {
-    // Wait to have enough bytes
+    // Wait to have enough bytes (with a timeout to avoid hanging forever
+    // if the device crashes)
     let mut pos: usize = 0;
+    let timeout = std::time::Duration::from_secs(30);
     loop {
-        let data = mqtt_in_consumer.recv().unwrap();
-        buffer[pos] = data;
-        pos += 1;
-        if pos == buffer.len() {
-            return;
+        let data = mqtt_in_consumer.recv_timeout(timeout);
+        match data {
+            Ok(byte) => {
+                buffer[pos] = byte;
+                pos += 1;
+                if pos == buffer.len() {
+                    return;
+                }
+            }
+            Err(_) => {
+                eprintln!("Timeout: no response from device after 30 seconds");
+                std::process::exit(1);
+            }
         }
     }
 }
