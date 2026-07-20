@@ -4,7 +4,7 @@
 
 use hbf_lite::{BufferReaderImpl, HbfFile};
 
-use crate::{crc::crc8_update};
+use crate::crc::crc8_update;
 
 /**
  * Generic enums
@@ -23,9 +23,15 @@ pub enum MessageError {
     DependencyError = 0xE9,
     MissingDependency = 0xEA,
     IllegalDowngrade = 0xEB,
-    //CannotFindComponent = 0xEC,
-    //CannotFindVersion = 0xED,
+    /// Delta: no installed component matches the delta header's base id+version.
+    DeltaBaseNotFound = 0xEC,
+    /// Delta: the masked base CRC-32b (Phase-2 early check) did not match the
+    /// value in the delta header — the installed base is the wrong build.
+    DeltaBaseCrcMismatch = 0xED,
     CannotStartComponent = 0xEE,
+    /// Delta: the reconstructed image's CRC-32b did not match — corrupt patch
+    /// or (if the base check is disabled) a wrong base.
+    DeltaReconstructMismatch = 0xEF,
     ChannelError = 0xFF,
 }
 #[derive(Clone, Copy)]
@@ -60,9 +66,7 @@ impl<'a> HelloMessage {
         // Validate buffer
         let op = Self::validate(buffer)?;
         // Return instance
-        Ok(Self {
-            operation: op,
-        })
+        Ok(Self { operation: op })
     }
     pub const fn get_size() -> usize {
         2
@@ -152,6 +156,7 @@ pub enum ComponentUpdateCommand {
     SendComponentPayload = 0x03,
     SendComponentTrailer = 0x04,
     SendNextFragment = 0xA0,
+    SendDeltaHeader = 0xB0,
 }
 
 #[repr(u8)]
@@ -204,7 +209,7 @@ impl<'a> FixedHeaderMessage<'a> {
     }
 }
 
-/* 
+/*
 pub struct ComponentIDPacket<'a> {
     buffer: &'a [u8],
 }
@@ -244,7 +249,7 @@ impl<'a> ComponentIDPacket<'a> {
     }
 } */
 
-/* 
+/*
 /**
  * Component Erase
  */
@@ -328,9 +333,9 @@ impl ComponentInfoMessage {
         }
         // Compute CRC-8
         let mut crc: u8 = 0x00;
-        for i in 0..buffer.len() -1 {
+        for i in 0..buffer.len() - 1 {
             crc8_update(&mut crc, buffer[i]);
         }
-        buffer[buffer.len()-1] = crc;
+        buffer[buffer.len() - 1] = crc;
     }
 }

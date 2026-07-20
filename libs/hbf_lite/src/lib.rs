@@ -8,6 +8,7 @@
 use core::fmt::{Debug, Error, Formatter};
 
 pub use header::{HbfHeaderBase, HbfHeaderMain, HbfHeaderRelocation, HbfHeaderDependency, HbfVersion, HBF_MAGIC};
+pub use header::ComponentFlags;
 
 pub use header::{
     HbfHeaderInterrupt, HbfHeaderRegion, FIXED_HEADER_SIZE,

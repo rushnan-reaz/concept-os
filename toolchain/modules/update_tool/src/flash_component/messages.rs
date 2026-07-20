@@ -10,7 +10,33 @@ pub enum ComponentUpdateCommand {
     SendComponentVariableHeader = 0x02,
     SendComponentPayload = 0x03,
     SendComponentTrailer = 0x04,
-    SendNextFragment = 0xA0
+    SendNextFragment = 0xA0,
+    SendDeltaHeader = 0xB0,
+}
+
+/// A single fixed packet of `data` bytes followed by a CRC-8 (used for the
+/// 32-byte Delta Header pull, `0xB0`). Same framing as `FixedHeaderMessage`.
+pub struct RawCrc8Message<'a> {
+    buffer: &'a [u8],
+}
+
+impl<'a> RawCrc8Message<'a> {
+    pub fn new(buffer: &'a [u8]) -> Self {
+        Self { buffer }
+    }
+}
+
+impl<'a> SerializableMessage<'a> for RawCrc8Message<'a> {
+    fn get_raw(&self) -> Vec<u8> {
+        let mut buffer = Vec::<u8>::new();
+        buffer.extend_from_slice(self.buffer);
+        let mut crc = 0x00;
+        for &b in self.buffer {
+            crc8_update(&mut crc, b);
+        }
+        buffer.push(crc);
+        buffer
+    }
 }
 
 #[repr(u8)]

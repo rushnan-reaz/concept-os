@@ -171,7 +171,6 @@ fn main() -> ! {
     // Main loop
     sys_log!("[UARTv1] Online!");
     let mut recv_buff: [u8; 12] = [0x00; 12];
-    let mut frame_recovery: bool = true;
     loop {
         hl::recv(
             &mut recv_buff,
@@ -234,17 +233,10 @@ fn main() -> ! {
 
                     // Frame error
                     if usart_isr.fe().bit_is_set() {
-                        if !frame_recovery {
-                            sys_log!("UART Frame Error");
-                            panic!();
-                        }
-                        // For this time, just reset the error.
-                        // This is needed as for some reason it happens to fire
-                        // after the peripheral is configured. Not enough time to
-                        // further investigate at the moment, maybe wait some flag
-                        // will fix it.
+                        // Clear the frame error flag. Frame errors are expected
+                        // with external modules like the HC-06 Bluetooth, which
+                        // can produce noise on power-up or when not paired.
                         usart.icr.write(|w| w.fecf().set_bit());
-                        frame_recovery = false;
                     }
 
                     // Overrun error: happens only if we mess up with the DMA
@@ -829,6 +821,13 @@ fn setup_gpio() -> Result<(), RCCError> {
         .moder
         .modify(|_, w| w.moder10().alternate().moder11().alternate());
     gpioc.afrh.modify(|_, w| w.afrh10().af7().afrh11().af7());
+
+    // Pull-up on RX pin (PC11) to prevent floating when HC-06 is not
+    // driving the line (e.g. not paired or during power-up). A floating
+    // RX line generates frame errors that would crash the driver.
+    gpioc
+        .pupdr
+        .modify(|_, w| w.pupdr11().pull_up());
 
     Ok(())
 }
