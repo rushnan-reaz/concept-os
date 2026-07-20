@@ -494,7 +494,17 @@ pub fn component_add_update(channel: &mut UartChannel) -> Result<(), MessageErro
     let needed_flash = wrap_hbf_error(hbf.header_base())?.total_size();
     let needed_ram = wrap_hbf_error(hbf.header_main())?.component_min_ram();
     let checksum_offset = wrap_hbf_error(hbf.checksum_offset())?; // safe call
+    // Detect a delta update (IS_DELTA flag in the fixed header).  The delta
+    // path reconstructs the pristine new.hbf into scratch and then reuses this
+    // same install flow, so it is handled entirely in `delta`.
+    let is_delta = wrap_hbf_error(hbf.header_main())?
+        .component_flags()
+        .contains(hbf_lite::ComponentFlags::IS_DELTA);
     drop(hbf); // Force ourselves not to use this object anymore
+
+    if is_delta {
+        return crate::delta::component_add_delta_update(channel);
+    }
 
     // Request the allocation
     let (mut methods, allocation) =
@@ -530,6 +540,146 @@ pub fn component_add_update(channel: &mut UartChannel) -> Result<(), MessageErro
         sys_log!("load_component failed");
     } else {
         sys_log!("Component loaded successfully");
+    }
+    Ok(())
+}
+
+/// Install a fully-reconstructed pristine `new.hbf` that already sits in the
+/// `scratch` flash block into a freshly-allocated final block, reusing the
+/// exact relocation / dual-checksum / validation path of the full update. The
+/// only difference from `add_update_core` is that every source byte comes from
+/// scratch flash instead of the channel.
+///
+/// On success returns the final block's flash base address (the caller sends
+/// the Success response and calls `load_component`). On error the final block
+/// is deallocated. The scratch block is owned and freed by the caller.
+pub(crate) fn install_reconstructed_from_scratch(
+    channel: &mut UartChannel,
+    scratch_base: u32,
+    scratch_size: u32,
+) -> Result<u32, MessageError> {
+    // Parse just enough of the reconstructed header to size the final block.
+    let (needed_flash, needed_ram) = {
+        let sr = FlashReader::from(scratch_base, scratch_size);
+        let hbf = wrap_hbf_error(HbfFile::from_reader(&sr))?;
+        let needed_flash = wrap_hbf_error(hbf.header_base())?.total_size();
+        let needed_ram = wrap_hbf_error(hbf.header_main())?.component_min_ram();
+        (needed_flash, needed_ram)
+    };
+
+    // Allocate the final block.
+    let (mut methods, final_alloc) =
+        UpdateMethods::methods_for_requirements(needed_flash, needed_ram, channel).map_err(
+            |e| match e {
+                StorageError::OutOfFlash | StorageError::OutOfRam => MessageError::NotEnoughSpace,
+                _ => MessageError::FlashError,
+            },
+        )?;
+
+    match install_core(&mut methods, &final_alloc, scratch_base, scratch_size) {
+        Ok(()) => Ok(final_alloc.flash_base_address),
+        Err(e) => {
+            methods.deallocate();
+            Err(e)
+        }
+    }
+}
+
+fn install_core(
+    methods: &mut UpdateMethods,
+    final_alloc: &AllocateComponentResponse,
+    scratch_base: u32,
+    scratch_size: u32,
+) -> Result<(), MessageError> {
+    // Field values from the reconstructed scratch header.
+    let (checksum_offset, payload_offset, payload_size, num_relocations) = {
+        let sr = FlashReader::from(scratch_base, scratch_size);
+        let hbf = wrap_hbf_error(HbfFile::from_reader(&sr))?;
+        (
+            wrap_hbf_error(hbf.checksum_offset())?,
+            wrap_hbf_error(hbf.get_readonly_payload())?.get_offset(),
+            wrap_hbf_error(hbf.payload_size())?,
+            wrap_hbf_error(hbf.header_base())?.num_relocations(),
+        )
+    };
+
+    let mut validation_checksum: u32 = 0;
+    let mut tmp: [u8; PACKET_BUFFER_SIZE] = [0x00; PACKET_BUFFER_SIZE];
+
+    // --- Copy the header [0, payload_offset) verbatim: scratch -> final -------
+    let mut off: u32 = 0;
+    while off < payload_offset {
+        let n = core::cmp::min(PACKET_BUFFER_SIZE, (payload_offset - off) as usize);
+        methods.storage_read_stream(scratch_base, off, &mut tmp[0..n])?;
+        update_checksum(&mut validation_checksum, &tmp[0..n]);
+        methods.storage_write_stream(off, &tmp[0..n], false)?;
+        off += n as u32;
+    }
+    // Flush so the final HBF header is fully readable from flash.
+    methods.storage_write_stream(off, &[], true)?;
+
+    // --- Parse final HBF; validate dependencies (same as full path) ----------
+    let final_reader = FlashReader::from(final_alloc.flash_base_address, final_alloc.flash_size);
+    let final_hbf = wrap_hbf_error(HbfFile::from_reader(&final_reader))?;
+    validate_component_version_and_dependencies(
+        &final_hbf,
+        methods,
+        final_alloc.flash_base_address,
+    )?;
+
+    // --- Relocate the payload: scratch -> final ------------------------------
+    let mut new_checksum = validation_checksum;
+    let new_flash_base_address: u32 = final_alloc.flash_base_address + 8 + payload_offset;
+    let mut relocator =
+        Relocator::<LINKED_FLASH_BASE, LINKED_SRAM_BASE, BUFF_SIZE, RELOC_BUFF_SIZE>::new(
+            new_flash_base_address,
+            final_alloc.ram_base_address,
+            payload_offset as usize,
+            num_relocations as usize,
+        );
+    let mut checksum_buff = ChecksumBuff::new();
+    let end = payload_offset + payload_size;
+    off = payload_offset;
+    while off < end {
+        let n = core::cmp::min(PACKET_BUFFER_SIZE, (end - off) as usize);
+        methods.storage_read_stream(scratch_base, off, &mut tmp[0..n])?;
+        update_checksum(&mut validation_checksum, &tmp[0..n]);
+        let mut reloc_methods = UpdateRelocator {
+            hbf: &final_hbf,
+            methods: &mut *methods,
+            num_relocations: num_relocations as usize,
+            checksum: &mut new_checksum,
+        };
+        relocator
+            .consume_current_buffer(&tmp[0..n], &mut reloc_methods, &mut checksum_buff)
+            .map_err(|_| MessageError::FlashError)?;
+        off += n as u32;
+    }
+    let mut reloc_methods = UpdateRelocator {
+        hbf: &final_hbf,
+        methods: &mut *methods,
+        num_relocations: num_relocations as usize,
+        checksum: &mut new_checksum,
+    };
+    relocator
+        .finish(&mut reloc_methods, &mut checksum_buff)
+        .map_err(|_| MessageError::FlashError)?;
+
+    // --- Compare the reconstructed image's own XOR trailer, write new one ----
+    let mut trailer: [u8; 4] = [0x00; 4];
+    methods.storage_read_stream(scratch_base, checksum_offset, &mut trailer)?;
+    let original_checksum = u32::from_le_bytes(trailer);
+    if validation_checksum != original_checksum {
+        sys_log!("[delta] install checksum mismatch");
+        return Err(MessageError::FailedHBFValidation);
+    }
+    methods
+        .storage_write_stream(checksum_offset, &new_checksum.to_le_bytes(), true)
+        .map_err(|_| MessageError::FailedHBFValidation)?;
+
+    // --- Validate the installed final HBF ------------------------------------
+    if !wrap_hbf_error(final_hbf.validate())? {
+        return Err(MessageError::FailedHBFValidation);
     }
     Ok(())
 }

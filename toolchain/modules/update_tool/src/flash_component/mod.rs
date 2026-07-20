@@ -44,6 +44,25 @@ pub fn flash_component(
         }
     }
     let hbf = hbf_result.unwrap();
+
+    // Detect a Delta HBF by the IS_DELTA flag (bit 1 of Component Flags). We
+    // read the raw flag word because hbf_rs' ComponentFlags does not define
+    // IS_DELTA and would truncate it. A Delta HBF carries a CRC-32b trailer
+    // (not the XOR checksum), so the standard `hbf.validate()` must be skipped.
+    let flags_offset = hbf_rs::HBF_HEADER_MIN_SIZE + 2;
+    let component_flags = u16::from_le_bytes([hbf_bytes[flags_offset], hbf_bytes[flags_offset + 1]]);
+    const IS_DELTA_BIT: u16 = 1 << 1;
+    if component_flags & IS_DELTA_BIT != 0 {
+        flash_delta_component(
+            &channel_in_consumer,
+            &channel_out_producer,
+            &hbf_bytes,
+            &hbf,
+            verbose,
+        );
+        return;
+    }
+
     // Validate hbf
     if !hbf.validate() {
         panic!("HBF file integrity test failed!");
@@ -288,6 +307,138 @@ fn send_trailer(
     progress.finish();
 
     println!("\nSuccess!");
+}
+
+// ---------------------------------------------------------------------------
+//  Delta HBF serving path (§4d)
+// ---------------------------------------------------------------------------
+//
+// Delta HBF layout (see ConceptOSDeltaBinaryFormat.md / delta_gen):
+//   [ fixed header (IS_DELTA set) ][ 32-byte Delta Header ][ patch ][ CRC-32b ]
+//
+// Device request sequence on the delta path:
+//   0x01 (fixed header) -> 0xB0 (delta header) -> 0xA0... (patch fragments)
+//   -> optional 0x04 (delta trailer) -> Success (0xFF).
+
+fn flash_delta_component(
+    channel_in_consumer: &Receiver<u8>,
+    channel_out_producer: &Sender<Vec<u8>>,
+    hbf_bytes: &[u8],
+    hbf: &dyn HbfFile,
+    verbose: bool,
+) {
+    use delta_patcher::DELTA_HEADER_SIZE;
+
+    let fixed_len = hbf_rs::FIXED_HEADER_SIZE;
+    let delta_hdr_start = fixed_len;
+    let delta_hdr_end = delta_hdr_start + DELTA_HEADER_SIZE;
+    if hbf_bytes.len() < delta_hdr_end + 4 {
+        panic!("Delta HBF too short (fixed header + delta header + trailer)");
+    }
+    // Patch payload size lives at offset 0x18 within the Delta Header.
+    let patch_size = u32::from_le_bytes(
+        hbf_bytes[delta_hdr_start + 0x18..delta_hdr_start + 0x1C]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let patch_start = delta_hdr_end;
+    let patch_end = patch_start + patch_size;
+    if patch_end + 4 > hbf_bytes.len() {
+        panic!(
+            "Delta HBF inconsistent: patch_size={} overruns file (len={})",
+            patch_size,
+            hbf_bytes.len()
+        );
+    }
+
+    let fixed_header = &hbf_bytes[0..fixed_len];
+    let delta_header = &hbf_bytes[delta_hdr_start..delta_hdr_end];
+    let patch = &hbf_bytes[patch_start..patch_end];
+    let delta_trailer = &hbf_bytes[hbf_bytes.len() - 4..];
+
+    if verbose {
+        println!("---> Flashing Delta Component");
+        println!("\tComponent ID: {}", hbf.header_base().component_id());
+        println!("\tComponent Version: {}", hbf.header_base().component_version());
+        println!("\tPatch payload: {} bytes", patch_size);
+        println!("\tDelta HBF total: {} bytes", hbf_bytes.len());
+    }
+
+    let mut progress = ProgressBar::new((fixed_len + DELTA_HEADER_SIZE + patch_size + 4) as u64);
+    progress.show_speed = false;
+    progress.show_counter = false;
+    progress.show_time_left = false;
+    progress.set_width(Some(80));
+
+    // --- Hello ---------------------------------------------------------------
+    progress.message("Connection Setup   ");
+    let hello_msg = HelloMessage::new(OperationType::ComponentUpdate);
+    channel_flush_read(channel_in_consumer);
+    channel_write(channel_out_producer, &hello_msg.get_raw());
+    let mut buff: [u8; HelloResponseMessage::get_size()] = [0x00; HelloResponseMessage::get_size()];
+    channel_read(channel_in_consumer, &mut buff);
+    if HelloResponseMessage::from(&buff).is_err() {
+        eprintln!("Wrong response from device at HELLO");
+        return;
+    }
+    progress.inc();
+
+    // --- Fixed header (0x01) --------------------------------------------------
+    let mut req: [u8; 1] = [0x00; 1];
+    channel_read(channel_in_consumer, &mut req);
+    if req[0] != ComponentUpdateCommand::SendComponentFixedHeader as u8 {
+        eprintln!("Unexpected response before fixed header: {:?}", MessageError::from(req[0]));
+        return;
+    }
+    progress.message("Header   ");
+    channel_write(channel_out_producer, &FixedHeaderMessage::new(fixed_header).get_raw());
+    progress.add((fixed_len - 1) as u64);
+
+    // --- Delta header (0xB0) --------------------------------------------------
+    channel_read(channel_in_consumer, &mut req);
+    if req[0] != ComponentUpdateCommand::SendDeltaHeader as u8 {
+        eprintln!("Unexpected response before delta header: {:?}", MessageError::from(req[0]));
+        return;
+    }
+    progress.message("Delta Header   ");
+    channel_write(channel_out_producer, &RawCrc8Message::new(delta_header).get_raw());
+    progress.add(DELTA_HEADER_SIZE as u64);
+
+    // --- Patch payload (0xA0 fragments) + optional trailer (0x04) -------------
+    let mut pkt = RawPacket::new(patch);
+    loop {
+        channel_read(channel_in_consumer, &mut req);
+        match req[0] {
+            x if x == ComponentUpdateCommand::SendNextFragment as u8 => {
+                match pkt.get_next_fragment() {
+                    Some(fragment) => {
+                        progress.message("Patch   ");
+                        let data_len = fragment.len() - 1;
+                        channel_write(channel_out_producer, &fragment);
+                        progress.add(data_len as u64);
+                    }
+                    None => {
+                        eprintln!("Device requested more patch than available");
+                        return;
+                    }
+                }
+            }
+            x if x == ComponentUpdateCommand::SendComponentTrailer as u8 => {
+                progress.message("Delta Trailer   ");
+                channel_write(channel_out_producer, &delta_trailer.to_vec());
+                progress.add(4);
+            }
+            x if x == ComponentUpdateResponse::Success as u8 => {
+                progress.finish();
+                println!("\nSuccess!");
+                return;
+            }
+            other => {
+                eprintln!("Unexpected response during patch transfer: {:?}", MessageError::from(other));
+                return;
+            }
+        }
+    }
 }
 
 fn extract_variable_header(hbf: &dyn HbfFile) -> Vec<u8> {

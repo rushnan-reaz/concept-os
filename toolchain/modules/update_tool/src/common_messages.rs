@@ -21,8 +21,10 @@ pub enum MessageError {
     DependencyError,
     MissingDependency,
     IllegalDowngrade,
-    //CannotFindComponent = 0xEC,
-    //CannotFindVersion = 0xED,
+    DeltaBaseNotFound,
+    DeltaBaseCrcMismatch,
+    DeltaReconstructMismatch,
+    Unknown(u8),
 }
 
 impl From<u8> for MessageError {
@@ -39,7 +41,10 @@ impl From<u8> for MessageError {
             0xE9 => Self::DependencyError,
             0xEA => Self::MissingDependency,
             0xEB => Self::IllegalDowngrade,
-            _ => panic!("Unknown response"),
+            0xEC => Self::DeltaBaseNotFound,
+            0xED => Self::DeltaBaseCrcMismatch,
+            0xEF => Self::DeltaReconstructMismatch,
+            other => Self::Unknown(other),
         }
     }
 }

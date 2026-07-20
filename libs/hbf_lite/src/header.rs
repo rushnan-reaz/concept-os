@@ -24,6 +24,9 @@ bitflags::bitflags! {
     pub struct ComponentFlags: u16 {
         const NONE = 0;
         const START_AT_BOOT = 1 << 0;
+        /// The component payload is a delta patch (see delta_patcher /
+        /// ConceptOSDeltaBinaryFormat.md), not a full component image.
+        const IS_DELTA = 1 << 1;
     }
 }
 bitflags::bitflags! {

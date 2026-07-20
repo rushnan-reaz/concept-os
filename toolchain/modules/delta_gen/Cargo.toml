@@ -1,0 +1,15 @@
+[package]
+name = "delta_gen"
+version = "0.1.0"
+edition = "2021"
+description = "Generate a Delta HBF patch from a pristine (old.hbf, new.hbf) component pair"
+
+[[bin]]
+name = "delta_gen"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "3.2.19", features = ["derive"] }
+hbf_rs = { path = "../../../libs/hbf_rs" }
+# std encoder + decoder (default features include `std`).
+delta_patcher = { path = "../../../libs/delta_patcher" }
