@@ -4,6 +4,10 @@ version = 2
 priority = 30
 flags = ['START_AT_BOOT']
 min_ram = 2048
+# GPIOC MMIO region for the delta profiling phase markers (Port C). Used only
+# when the `profiling` feature is on; harmless otherwise. Clock is enabled via
+# the rcc component (IPC), so no RCC region is needed here.
+peripherals = ['gpioc']
 
 # Storage
 [[dependencies]]

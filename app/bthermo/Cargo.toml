@@ -20,6 +20,7 @@ features = ["l476rg", "log-itm"]
 
 [[bin]]
 name = "bthermo"
+path = "src/main.rs"
 test = false
 bench = false
 

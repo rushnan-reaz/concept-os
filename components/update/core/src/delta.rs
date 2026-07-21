@@ -28,7 +28,16 @@ use userlib::sys_log;
 /// Entry point for a delta component update. The caller has already pulled and
 /// validated the outer fixed header and confirmed `IS_DELTA` is set.
 pub fn component_add_delta_update(channel: &mut UartChannel) -> Result<(), MessageError> {
-    let header = pull_delta_header(channel)?;
+    // One-time GPIOC setup for the phase markers (no-op unless `profiling`).
+    // Runs before any marker is raised, so its cost is outside every phase.
+    crate::markers::markers_init();
+    use crate::markers::Marker;
+
+    // PC0: pull + validate the delta header.
+    let header = {
+        let _m = Marker::new(0);
+        pull_delta_header(channel)?
+    };
     sys_log!(
         "[UPDATE][delta] header ok: base id={} ver={} patch={}B target={}B",
         header.base_component_id,
@@ -37,15 +46,20 @@ pub fn component_add_delta_update(channel: &mut UartChannel) -> Result<(), Messa
         header.target_size
     );
 
-    // Locate the base component in flash by id + version.
-    let (base_base, base_size) = find_base(&header)?;
+    // PC1: locate the base component in flash by id + version.
+    let (base_base, base_size) = {
+        let _m = Marker::new(1);
+        find_base(&header)?
+    };
     sys_log!("[UPDATE][delta] base found @ {:#010x} ({}B)", base_base, base_size);
 
-    // Phase-2 early check: verify the masked base CRC-32b before spending a
-    // reconstruction+scratch pass. This distinguishes "wrong base" from
-    // "corrupt patch" and fails fast; correctness does not depend on it (the
-    // reconstructed-CRC gate below is the authoritative check).
-    verify_masked_base_crc(base_base, base_size, header.base_crc32)?;
+    // PC2: masked base-CRC early check (Phase-2). Distinguishes "wrong base"
+    // from "corrupt patch" and fails fast; correctness does not depend on it
+    // (the reconstructed-CRC gate below is the authoritative check).
+    {
+        let _m = Marker::new(2);
+        verify_masked_base_crc(base_base, base_size, header.base_crc32)?;
+    }
     sys_log!("[UPDATE][delta] masked base CRC ok");
 
     // Allocate scratch for the reconstructed image (flash only, ram_size = 0).
@@ -56,19 +70,27 @@ pub fn component_add_delta_update(channel: &mut UartChannel) -> Result<(), Messa
             .map_err(map_alloc_err)?
     };
 
-    // Reconstruct pristine new.hbf into scratch and verify its CRC-32b.
-    if let Err(e) = reconstruct(channel, &header, base_base, base_size, scratch.flash_base_address) {
+    // PC3: reconstruct pristine new.hbf into scratch and verify its CRC-32b
+    // (the phase that dominates the update; do not toggle inside its loop).
+    let recon = {
+        let _m = Marker::new(3);
+        reconstruct(channel, &header, base_base, base_size, scratch.flash_base_address)
+    };
+    if let Err(e) = recon {
         free_block(scratch.flash_base_address);
         return Err(e);
     }
     sys_log!("[UPDATE][delta] reconstruction verified");
 
-    // Install from scratch (reuses the proven relocate/validate/load path).
-    let install = crate::update::install_reconstructed_from_scratch(
-        channel,
-        scratch.flash_base_address,
-        scratch.flash_size,
-    );
+    // PC4: install from scratch (reuses the proven relocate/validate/load path).
+    let install = {
+        let _m = Marker::new(4);
+        crate::update::install_reconstructed_from_scratch(
+            channel,
+            scratch.flash_base_address,
+            scratch.flash_size,
+        )
+    };
     // Scratch is no longer needed; free it before load_component (task switch).
     free_block(scratch.flash_base_address);
     let final_base = install?;

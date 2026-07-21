@@ -9,6 +9,7 @@ mod crc;
 mod messages;
 mod update;
 mod delta;
+mod markers;
 mod utils;
 mod consts;
 mod info;
