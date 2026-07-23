@@ -17,7 +17,7 @@
 
 use crate::consts::PACKET_BUFFER_SIZE;
 use crate::messages::*;
-use crate::utils::{channel_ask, channel_write_single, wrap_hbf_error, FlashReader};
+use crate::utils::{channel_ask, channel_write_single, wrap_hbf_error};
 use delta_patcher::format::DeltaHeader;
 use delta_patcher::{Crc32State, Decoder, DecoderAction, DELTA_HEADER_SIZE, MAX_OPCODE_HEADER};
 use storage_api::{Storage, StorageError};
@@ -171,32 +171,53 @@ const MAX_BASE_RELOCS: usize = 64;
 /// Skipped silently if the base has more than `MAX_BASE_RELOCS` relocations.
 fn verify_masked_base_crc(
     base_base: u32,
-    base_size: u32,
+    _base_size: u32,
     expected: u32,
 ) -> Result<(), MessageError> {
-    // Parse the base header from flash to read its own relocation table.
-    let (total, checksum_offset, relocs, num_relocs) = {
-        let reader = FlashReader::from(base_base, base_size);
+    let mut storage = Storage::new();
+
+    // Read the fixed header the SAME way `find_base` does — one `read_stream`
+    // into a zeroed stack buffer, parsed in-memory with `BufferReaderImpl`.
+    // The previous per-field `FlashReader` path misread the header from flash
+    // (garbage `num_relocations`/`total_size`), causing this check to silently
+    // skip or fault. Every read here goes through `read_stream`, which the CRC
+    // loop and `reconstruct` already use reliably.
+    let mut hdr_buf = [0u8; hbf_lite::HBF_HEADER_MIN_SIZE];
+    storage
+        .read_stream(base_base, 0, &mut hdr_buf)
+        .map_err(|_| MessageError::FlashError)?;
+    let (total, checksum_offset, reloc_offset, num) = {
+        let reader = hbf_lite::BufferReaderImpl::from(&hdr_buf);
         let hbf = wrap_hbf_error(hbf_lite::HbfFile::from_reader(&reader))?;
         let hb = wrap_hbf_error(hbf.header_base())?;
-        let num = hb.num_relocations() as usize;
-        if num > MAX_BASE_RELOCS {
-            sys_log!("[UPDATE][delta] base has {} relocs (> {}), skipping masked CRC", num, MAX_BASE_RELOCS);
-            return Ok(());
-        }
-        let total = hb.total_size();
-        let checksum_offset = wrap_hbf_error(hbf.checksum_offset())?;
-        // Snapshot the reloc file offsets once (avoid re-reading flash per chunk).
-        let mut relocs = [0u32; MAX_BASE_RELOCS];
-        for i in 0..num {
-            let v = wrap_hbf_error(hbf.relocation_nth(i as u32))?.value();
-            relocs[i] = v & 0x00FF_FFFF;
-        }
-        (total, checksum_offset, relocs, num)
+        (
+            hb.total_size(),
+            wrap_hbf_error(hbf.checksum_offset())?,
+            hb.offset_relocation() as u32,
+            hb.num_relocations() as usize,
+        )
     };
 
+    if num > MAX_BASE_RELOCS {
+        sys_log!("[UPDATE][delta] base has {} relocs (> {}), skipping masked CRC", num, MAX_BASE_RELOCS);
+        return Ok(());
+    }
+
+    // Snapshot the relocation file-offsets, reading each 4-byte entry directly
+    // via `read_stream` (no `FlashReader`). Table lives at `offset_relocation`,
+    // entries are `RELOC_SIZE` apart; `value()` is the entry's first u32.
+    let mut relocs = [0u32; MAX_BASE_RELOCS];
+    for i in 0..num {
+        let mut rbuf = [0u8; 4];
+        let entry_off = reloc_offset + (i as u32) * (hbf_lite::RELOC_SIZE as u32);
+        storage
+            .read_stream(base_base, entry_off, &mut rbuf)
+            .map_err(|_| MessageError::FlashError)?;
+        relocs[i] = u32::from_le_bytes(rbuf) & 0x00FF_FFFF;
+    }
+
+    // Stream the base HBF, zeroing the trailer + relocation-site windows, CRC.
     let mut crc = Crc32State::new();
-    let mut storage = Storage::new();
     let mut tmp: [u8; PACKET_BUFFER_SIZE] = [0x00; PACKET_BUFFER_SIZE];
     let mut off: u32 = 0;
     while off < total {
@@ -204,10 +225,8 @@ fn verify_masked_base_crc(
         storage
             .read_stream(base_base, off, &mut tmp[0..n])
             .map_err(|_| MessageError::FlashError)?;
-        // Zero the 4-byte trailer window and every relocation-site window that
-        // overlaps this chunk.
         zero_window(&mut tmp[0..n], off, checksum_offset, 4);
-        for &fo in &relocs[0..num_relocs] {
+        for &fo in &relocs[0..num] {
             zero_window(&mut tmp[0..n], off, fo, 4);
         }
         crc.update(&tmp[0..n]);
