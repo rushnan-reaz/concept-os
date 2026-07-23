@@ -13,6 +13,7 @@
 
 #[cfg(feature = "profiling")]
 mod imp {
+    use core::sync::atomic::{compiler_fence, Ordering};
     use rcc_api::{Peripheral, RCC};
     use stm32l476rg::device;
 
@@ -64,18 +65,29 @@ mod imp {
         gpioc.bsrr.write(|w| unsafe { w.bits(0x1F << 16) });
     }
 
-    /// Drive marker `pin` (0..=4) HIGH — single atomic BSRR set.
+    /// Drive marker `pin` (0..=4) HIGH — single atomic BSRR set, then a barrier
+    /// so the phase's work cannot be reordered *before* the pin goes high.
+    ///
+    /// The BSRR store has no data dependency on the bracketed work, so without
+    /// these barriers `-Oz` + LTO is free to hoist/sink the set and clear until
+    /// they run back-to-back, collapsing the measured pulse.
     #[inline(always)]
     pub fn mark_set(pin: u8) {
         let gpioc = unsafe { &*device::GPIOC::PTR };
         gpioc.bsrr.write(|w| unsafe { w.bits(1u32 << pin) });
+        compiler_fence(Ordering::SeqCst);
+        cortex_m::asm::dsb();
     }
 
-    /// Drive marker `pin` (0..=4) LOW — single atomic BSRR reset.
+    /// Drive marker `pin` (0..=4) LOW — barrier first so the phase's work cannot
+    /// be reordered *after* the pin goes low, then the single atomic BSRR reset.
     #[inline(always)]
     pub fn mark_clear(pin: u8) {
+        compiler_fence(Ordering::SeqCst);
+        cortex_m::asm::dsb();
         let gpioc = unsafe { &*device::GPIOC::PTR };
         gpioc.bsrr.write(|w| unsafe { w.bits(1u32 << (pin as u32 + 16)) });
+        compiler_fence(Ordering::SeqCst);
     }
 }
 
