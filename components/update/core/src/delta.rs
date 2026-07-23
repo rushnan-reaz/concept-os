@@ -56,11 +56,21 @@ pub fn component_add_delta_update(channel: &mut UartChannel) -> Result<(), Messa
     // PC2: masked base-CRC early check (Phase-2). Distinguishes "wrong base"
     // from "corrupt patch" and fails fast; correctness does not depend on it
     // (the reconstructed-CRC gate below is the authoritative check).
-    {
+    let base_check = {
         let _m = Marker::new(2);
-        verify_masked_base_crc(base_base, base_size, header.base_crc32)?;
+        verify_masked_base_crc(base_base, base_size, header.base_crc32)?
+    };
+    match base_check {
+        BaseCheckOutcome::Verified => {
+            sys_log!("[UPDATE][delta] masked base CRC verified");
+        }
+        BaseCheckOutcome::SkippedTooManyRelocs => {
+            sys_log!(
+                "[UPDATE][delta] masked base CRC skipped (>{} relocs); correctness deferred to reconstructed-CRC",
+                MAX_BASE_RELOCS
+            );
+        }
     }
-    sys_log!("[UPDATE][delta] masked base CRC ok");
 
     // Allocate scratch for the reconstructed image (flash only, ram_size = 0).
     let scratch = {
@@ -160,6 +170,17 @@ fn find_base(header: &DeltaHeader) -> Result<(u32, u32), MessageError> {
 /// RAM-constrained update component (64 * 4 = 256 bytes).
 const MAX_BASE_RELOCS: usize = 64;
 
+/// Outcome of the optional masked base-CRC check. `Verified` means the CRC ran
+/// and matched the delta header's `base_crc32`. `SkippedTooManyRelocs` means the
+/// base exceeded `MAX_BASE_RELOCS`, so the optimization was not run — correctness
+/// is then guaranteed unconditionally by the mandatory reconstructed-CRC gate.
+/// A genuine mismatch is reported out-of-band as `Err(DeltaBaseCrcMismatch)`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BaseCheckOutcome {
+    Verified,
+    SkippedTooManyRelocs,
+}
+
 /// Phase-2 masked base-CRC verification.
 ///
 /// Recompute the CRC-32b over the base HBF in flash with every relocation-site
@@ -168,13 +189,18 @@ const MAX_BASE_RELOCS: usize = 64;
 /// `base_crc32`. Zeroing is idempotent, so the device does not need to sort or
 /// merge the ranges: it just zeroes each forbidden 4-byte window.
 ///
-/// Skipped silently if the base has more than `MAX_BASE_RELOCS` relocations.
+/// Returns [`BaseCheckOutcome::Verified`] when the CRC ran and matched, and
+/// [`BaseCheckOutcome::SkippedTooManyRelocs`] when the base exceeds
+/// `MAX_BASE_RELOCS` so the optimization could not run. The two are distinct so
+/// a skipped check can never be mistaken for a verified base; correctness in the
+/// skipped case rests on the mandatory reconstructed-CRC gate. A genuine
+/// mismatch is `Err(DeltaBaseCrcMismatch)` (fail fast).
 fn verify_masked_base_crc(
     base_base: u32,
     _base_size: u32,
     expected: u32,
-) -> Result<(), MessageError> {
-    let mut storage = Storage::new();
+) -> Result<BaseCheckOutcome, MessageError> {
+    let storage = Storage::new();
 
     // Read the fixed header the SAME way `find_base` does — one `read_stream`
     // into a zeroed stack buffer, parsed in-memory with `BufferReaderImpl`.
@@ -200,7 +226,7 @@ fn verify_masked_base_crc(
 
     if num > MAX_BASE_RELOCS {
         sys_log!("[UPDATE][delta] base has {} relocs (> {}), skipping masked CRC", num, MAX_BASE_RELOCS);
-        return Ok(());
+        return Ok(BaseCheckOutcome::SkippedTooManyRelocs);
     }
 
     // Snapshot the relocation file-offsets, reading each 4-byte entry directly
@@ -236,7 +262,7 @@ fn verify_masked_base_crc(
     if crc.finalize() != expected {
         return Err(MessageError::DeltaBaseCrcMismatch);
     }
-    Ok(())
+    Ok(BaseCheckOutcome::Verified)
 }
 
 /// Zero the bytes of `chunk` (which starts at file offset `chunk_off`) that fall
