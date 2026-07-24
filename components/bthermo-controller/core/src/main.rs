@@ -34,7 +34,10 @@ fn main() -> ! {
     let mut in_buffer: [u8; 1] = [0; 1];
     loop {
         // Wait for the command type
-        channel_read_no_timeout(&mut serial, &mut in_buffer);
+        if !channel_read_no_timeout(&mut serial, &mut in_buffer) {
+            // Channel disrupted (e.g. during an update handover) — retry
+            continue;
+        }
         // Analyze command
         match in_buffer[0] {
             CMD_READ_RTC => {
@@ -109,7 +112,13 @@ fn main() -> ! {
                 channel_write(&mut serial, &response_pkt);
             }
             CMD_GET_PROGRAMS => {
-                let data = bthermo.get_programs().unwrap_lite();
+                let data = match bthermo.get_programs() {
+                    Ok(d) => d,
+                    Err(_) => {
+                        channel_write(&mut serial, &[CMD_GET_PROGRAMS, 0x01]);
+                        continue;
+                    }
+                };
                 let programs = &data.programs[0..data.num_valid as usize];
                 // We must allocate the whole space, then we will send only the needed one
                 // This is required as we do not have an allocator
@@ -196,7 +205,10 @@ fn main() -> ! {
 }
 
 fn channel_write(serial: &mut UartChannel, data: &[u8]) {
-    serial.write_block(SERIAL_CHANNEL, data).unwrap_lite();
+    // Best-effort: if the channel is disrupted (e.g. during an update handover),
+    // drop the response rather than panicking. The peer will time out and retry
+    // at the protocol level; a dead controller is strictly worse than a dropped reply.
+    let _ = serial.write_block(SERIAL_CHANNEL, data);
 }
 
 fn channel_read(serial: &mut UartChannel, data: &mut [u8]) -> bool {
@@ -205,6 +217,6 @@ fn channel_read(serial: &mut UartChannel, data: &mut [u8]) -> bool {
         .is_ok()
 }
 
-fn channel_read_no_timeout(serial: &mut UartChannel, data: &mut [u8]) {
-    serial.read_block(SERIAL_CHANNEL, data).unwrap_lite()
+fn channel_read_no_timeout(serial: &mut UartChannel, data: &mut [u8]) -> bool {
+    serial.read_block(SERIAL_CHANNEL, data).is_ok()
 }
