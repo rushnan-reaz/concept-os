@@ -10,6 +10,7 @@ dependencies = [
  "byteorder",
  "hbf_lite",
  "serde",
+ "unwrap-lite",
  "zerocopy",
 ]
 
@@ -166,6 +167,7 @@ name = "hbf_lite"
 version = "0.0.1"
 dependencies = [
  "bitflags",
+ "cfg-if 1.0.0",
 ]
 
 [[package]]

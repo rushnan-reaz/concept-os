@@ -5,13 +5,10 @@ logger:
   level: "DEBUG"         # log level: DEBUG, INFO, SUCCESS, WARNING, ERROR
 
 serial:
-  port_name: /dev/rfcomm0 # /dev/ttyACM0 
-  # port_name: /dev/rfcomm0
-  port_name: /dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_02470215523200063638414B-if02
-  baudrate: 115200
+  port_name: /dev/rfcomm0
+  baudrate: 9600
 
 mqtt:
-  server_ip: "127.0.0.1"
   server_ip: "127.0.0.1"
   server_port: 1883
   username: "mqtt"
