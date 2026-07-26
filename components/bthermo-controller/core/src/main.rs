@@ -40,7 +40,7 @@ fn main() -> ! {
             CMD_READ_RTC => {
                 let data = bthermo.read_rtc();
                 if data.is_err() {
-                    channel_write(&mut serial, &[CMD_READ_TEMP, 0x01]);
+                    channel_write(&mut serial, &[CMD_READ_RTC, 0x01]);
                     continue;
                 }
                 let mut response_pkt: [u8; 9] = [0x00; 9];

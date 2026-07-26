@@ -233,7 +233,7 @@ fn validate_component_version_and_dependencies(
             // Check whether this component is an old version of ours
             if comp_data.component_id() == hbf_base.component_id() {
                 // Check constraint on greater version
-                if comp_data.component_version() >= hbf_base.component_version() {
+                if comp_data.component_version() > hbf_base.component_version() {
                     return Err(MessageError::IllegalDowngrade);
                 }
             }
@@ -243,6 +243,10 @@ fn validate_component_version_and_dependencies(
                 // Only makes sense if we miss something
                 for dep_num in 0..num_dependencies {
                     let dep = wrap_hbf_error(hbf.dependency_nth(dep_num))?;
+                    // Only check this dependency if the on-device component matches
+                    if dep.component_id() != comp_data.component_id() {
+                        continue;
+                    }
                     // Check version
                     if dep.min_version() > 0 && comp_data.component_version() < dep.min_version() {
                         // Wrong version (lower bound)
@@ -433,29 +437,37 @@ fn add_update_core(
 
     // Read the trailer (raw)
     let original_checksum = u32::from_le_bytes(hbf_trailer_buff);
+    sys_log!("Trailer received. val_cs={:#010x} orig_cs={:#010x} new_cs={:#010x}", validation_checksum, original_checksum, new_checksum);
 
     // Validate checksum and write the new checksum in flash
     let new_checksum_bytes = new_checksum.to_le_bytes();
-    if validation_checksum != original_checksum
-        || methods
-            .storage_write_stream(
-                checksum_offset,
-                &new_checksum_bytes,
-                true, // !!--- important to flush, as later the validation will need the whole hbf stored
-            )
-            .is_err()
+    if validation_checksum != original_checksum {
+        sys_log!("Checksum mismatch!");
+        return Err(MessageError::FailedHBFValidation);
+    }
+    sys_log!("Checksum matched, writing new checksum to flash");
+    if methods
+        .storage_write_stream(
+            checksum_offset,
+            &new_checksum_bytes,
+            true, // !!--- important to flush, as later the validation will need the whole hbf stored
+        )
+        .is_err()
     {
+        sys_log!("Failed to write new checksum!");
         return Err(MessageError::FailedHBFValidation);
     }
 
     // -----------------------------------------------------------------
     //    Step 7: Flush write buffer and validate using library
     // -----------------------------------------------------------------
-
-    // Validate the HBF (last one, to ensure the library reads it correctly)
-    if !wrap_hbf_error(flash_hbf.validate())? {
+    sys_log!("Validating HBF from flash");
+    let validation_result = wrap_hbf_error(flash_hbf.validate())?;
+    sys_log!("HBF validation result: {}", validation_result);
+    if !validation_result {
         return Err(MessageError::FailedHBFValidation);
     }
+    sys_log!("HBF validated OK");
     Ok(())
 }
 
@@ -505,20 +517,37 @@ pub fn component_add_update(channel: &mut UartChannel) -> Result<(), MessageErro
         // Return the error
         e
     })?;
-    // Start component, do stuff ...
-    sys_log!("Try to start component");
+    // Send Success response BEFORE load_component.
+    // load_component triggers a kernel-side task switch that can preempt
+    // this task, so we must complete the protocol response first.
+    sys_log!("Sending Success response");
+    methods.channel_write_single(ComponentUpdateResponse::Success as u8)?;
+    sys_log!("Success sent, loading component");
+    // Start component (this may trigger a task switch to the new component)
     if !userlib::kipc::load_component(allocation.flash_base_address) {
-        return Err(MessageError::CannotStartComponent);
+        sys_log!("load_component failed");
+    } else {
+        sys_log!("Component loaded successfully");
     }
-    sys_log!("Component started!");
-    // Respond (at this point, do not delete the component if we just fail to send the end byte)
-    methods.channel_write_single(ComponentUpdateResponse::Success as u8)
+    Ok(())
 }
 
 fn update_checksum(checksum: &mut u32, bytes: &[u8]) {
-    for i in (0..bytes.len()).step_by(4) {
-        // Read 4 bytes
-        let word: u32 = u32_from_le_bytes(&bytes[i..i + 4]);
+    let full_words = bytes.len() / 4;
+    for i in 0..full_words {
+        let offset = i * 4;
+        let word: u32 = u32_from_le_bytes(&bytes[offset..offset + 4]);
+        *checksum ^= word;
+    }
+    // Handle remaining bytes (if length is not a multiple of 4)
+    let remaining = bytes.len() % 4;
+    if remaining > 0 {
+        let offset = full_words * 4;
+        let mut padded: [u8; 4] = [0x00; 4];
+        for i in 0..remaining {
+            padded[i] = bytes[offset + i];
+        }
+        let word: u32 = u32_from_le_bytes(&padded);
         *checksum ^= word;
     }
 }

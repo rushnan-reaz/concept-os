@@ -19,7 +19,7 @@ use stm32l432kc::device;
 use stm32l476rg::device;
 
 // Baudrate used during communication
-const BAUDRATE: u32 = 115_200;
+const BAUDRATE: u32 = 9_600;
 const USART_IRQ_MASK: u32 = 0b0000_0000_0000_0001;
 const DMA1_CH3_IRQ_MASK: u32 = 0b0000_0000_0000_0010;
 const TIMEOUT_MASK: u32 = 0b1000_0000_0000_0000;
@@ -128,6 +128,24 @@ fn main() -> ! {
 
     setup_usart(usart).unwrap();
     setup_gpio().unwrap();
+
+    // Stabilisation: after reset, the HC-06 TX line (PB11) may produce
+    // transient noise. Drain any garbage bytes and clear error flags
+    // before the DMA takes over. ~100 ms at 80 MHz.
+    for _ in 0..8_000_000u32 {
+        cortex_m::asm::nop();
+    }
+    // Clear any accumulated errors and stale data
+    usart.icr.write(|w| {
+        w.orecf().set_bit()
+         .fecf().set_bit()
+         .ncf().set_bit()
+         .idlecf().set_bit()
+    });
+    while usart.isr.read().rxne().bit_is_set() {
+        let _ = usart.rdr.read();
+    }
+
     setup_dma(dma1, usart).unwrap();
 
     // Turn on our interrupt. We haven't enabled any interrupt sources at the
@@ -140,10 +158,7 @@ fn main() -> ! {
     let mut state = DriverState {
         receiver_state: ReceiverState {
             receivers: Vec::new(),
-            current_read_pos: match got_state {
-                true => 0,
-                false => 1,
-            },
+            current_read_pos: 0, // Start at 0; the protocol parser discards any spurious bytes
             last_channel_id: None,
             last_packet_len: 0,
             header_data_buff: [0x00; 4],
@@ -171,7 +186,6 @@ fn main() -> ! {
     // Main loop
     sys_log!("[UARTv1] Online!");
     let mut recv_buff: [u8; 12] = [0x00; 12];
-    let mut frame_recovery: bool = true;
     loop {
         hl::recv(
             &mut recv_buff,
@@ -234,25 +248,18 @@ fn main() -> ! {
 
                     // Frame error
                     if usart_isr.fe().bit_is_set() {
-                        if !frame_recovery {
-                            sys_log!("UART Frame Error");
-                            panic!();
-                        }
-                        // For this time, just reset the error.
-                        // This is needed as for some reason it happens to fire
-                        // after the peripheral is configured. Not enough time to
-                        // further investigate at the moment, maybe wait some flag
-                        // will fix it.
+                        // Clear the frame error flag. Frame errors are expected
+                        // with external modules like the HC-06 Bluetooth, which
+                        // can produce noise on power-up or when not paired.
                         usart.icr.write(|w| w.fecf().set_bit());
-                        frame_recovery = false;
                     }
 
-                    // Overrun error: happens only if we mess up with the DMA
-                    // otherwise it's impossibile.
+                    // Overrun error: on wired VCP this only happens if DMA
+                    // is misconfigured, but over Bluetooth (HC-06) transient
+                    // noise can trigger ORE at any time. Clear it and
+                    // continue — the protocol CRC will catch any lost byte.
                     if usart_isr.ore().bit_is_set() {
-                        // Something happened
-                        sys_log!("UART Overrun");
-                        panic!();
+                        usart.icr.write(|w| w.orecf().set_bit());
                     }
 
                     // Enable again interrupts
@@ -813,22 +820,31 @@ fn setup_usart(usart: &device::usart1::RegisterBlock) -> Result<(), RCCError> {
 }
 
 #[cfg(any(feature = "board_stm32f303re", feature = "board_stm32l476rg"))]
-/// Write USART3 on GPIOC (pin 10,11)
+/// Write USART3 on GPIOB (pin 10,11)
+/// NOTE: USART3 can also be mapped to GPIOC (PC10/PC11). This uses
+/// GPIOB to match the current HC-06 wiring.
 fn setup_gpio() -> Result<(), RCCError> {
-    // TODO: the fact that we interact with GPIOC directly here is an expedient
+    // TODO: the fact that we interact with GPIOB directly here is an expedient
     // hack, but control of the GPIOs should probably be centralized somewhere.
-    let gpioc = unsafe { &*device::GPIOC::ptr() };
+    let gpiob = unsafe { &*device::GPIOB::ptr() };
 
     // Turn on clock and leave reset
     let mut rcc = rcc_api::RCC::new();
-    rcc.enable_clock(rcc_api::Peripheral::GPIOC)?;
-    rcc.leave_reset(rcc_api::Peripheral::GPIOC)?;
+    rcc.enable_clock(rcc_api::Peripheral::GPIOB)?;
+    rcc.leave_reset(rcc_api::Peripheral::GPIOB)?;
 
     // Setup Alternate Function 7
-    gpioc
+    gpiob
         .moder
         .modify(|_, w| w.moder10().alternate().moder11().alternate());
-    gpioc.afrh.modify(|_, w| w.afrh10().af7().afrh11().af7());
+    gpiob.afrh.modify(|_, w| w.afrh10().af7().afrh11().af7());
+
+    // Pull-up on RX pin (PB11) to prevent floating when HC-06 is not
+    // driving the line (e.g. not paired or during power-up). A floating
+    // RX line generates frame errors that would crash the driver.
+    gpiob
+        .pupdr
+        .modify(|_, w| w.pupdr11().pull_up());
 
     Ok(())
 }
@@ -950,6 +966,16 @@ fn dma_receive_to_idle(_: &device::dma1::RegisterBlock, usart: &device::usart1::
     if usart.cr3.read().dmar().bit_is_set() {
         return; // Already active
     }
+    // Clear any pending errors (ORE/FE/NF) that may have accumulated
+    // during boot before GPIO was configured (floating RX line).
+    usart.icr.write(|w| {
+        w.orecf().set_bit()
+         .fecf().set_bit()
+         .ncf().set_bit()
+         .idlecf().set_bit()
+    });
+    // Drain any stale byte in RDR
+    let _ = usart.rdr.read();
     // Enable UART parity error interrupt (even if we don't use it now)
     usart.cr1.modify(|_, w| w.peie().set_bit());
     // Enable UART error interrupt (frame error, noise error, overrun error)

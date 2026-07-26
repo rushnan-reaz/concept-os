@@ -58,6 +58,13 @@ impl<'a> I2C_Channel<'a> {
         self.gpiob.afrh.modify(|_, w| w.afrh8().af4().afrh9().af4());
         // Setup pins in open drain (critical for I2C)
         self.gpiob.otyper.modify(|_,w| w.ot8().open_drain().ot9().open_drain());
+        // Enable internal pull-ups. Open-drain lines with no pull-up can never
+        // be driven/read HIGH, so without this every I2C transaction fails
+        // identically (this was previously unset, and is consistent with
+        // every device on the bus failing the same way regardless of address
+        // or register content). Safe to enable even if the board also has
+        // external pull-ups.
+        self.gpiob.pupdr.modify(|_, w| w.pupdr8().pull_up().pupdr9().pull_up());
     }
     fn init_i2c(&mut self, rcc: &mut RCC) {
         // Turn on I2C1 and leave reset
@@ -170,12 +177,17 @@ impl<'a> I2C_Channel<'a> {
         device_address: u8,
         mem_address: u8,
     ) -> Result<(), ()> {
-        // Configure CR2
+        // Configure CR2. NBYTES=1: this phase transfers exactly one byte
+        // (the memory/register address) before the repeated START for the
+        // actual read/write. It was previously hardcoded to 8, which mismatched
+        // the single byte actually written and left NBYTES unsatisfied — with
+        // software AUTOEND this stalls the bus state for every subsequent
+        // transaction, on every I2C device.
         self.i2c1.cr2.modify(|_, w| {
             w.sadd()
                 .bits((device_address << 1 | 0) as u16)
                 .nbytes()
-                .bits(8) // The memory address
+                .bits(1) // The memory address
                 .autoend()
                 .software()
                 .rd_wrn()
@@ -189,12 +201,10 @@ impl<'a> I2C_Channel<'a> {
         timed_loop!(self.i2c1.isr.read().txis().is_empty());
         // Put address on the tx reg
         self.i2c1.txdr.write(|w| w.txdata().bits(mem_address));
-        // Wait until transfer completes
-        timed_loop!(self.i2c1.isr.read().txis().is_empty());
-        // Put a stop
-        self.i2c1
-            .cr2
-            .modify(|_, w| w.start().no_start().stop().stop());
+        // Wait until the single NBYTES-specified byte has been fully
+        // transferred (TC, not TXIS again — TXIS won't re-assert once NBYTES
+        // is satisfied under software AUTOEND).
+        timed_loop!(self.i2c1.isr.read().tc().is_complete());
         Ok(())
     }
 }
