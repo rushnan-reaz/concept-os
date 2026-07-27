@@ -128,6 +128,24 @@ fn main() -> ! {
 
     setup_usart(usart).unwrap();
     setup_gpio().unwrap();
+
+    // Stabilisation: after reset, the ST-Link VCP TX line (PA2) may produce
+    // transient noise. Drain any garbage bytes and clear error flags
+    // before the DMA takes over. ~100 ms at 80 MHz.
+    for _ in 0..8_000_000u32 {
+        cortex_m::asm::nop();
+    }
+    // Clear any accumulated errors and stale data
+    usart.icr.write(|w| {
+        w.orecf().set_bit()
+         .fecf().set_bit()
+         .ncf().set_bit()
+         .idlecf().set_bit()
+    });
+    while usart.isr.read().rxne().bit_is_set() {
+        let _ = usart.rdr.read();
+    }
+
     setup_dma(dma1, usart).unwrap();
 
     // Turn on our interrupt. We haven't enabled any interrupt sources at the
@@ -140,10 +158,7 @@ fn main() -> ! {
     let mut state = DriverState {
         receiver_state: ReceiverState {
             receivers: Vec::new(),
-            current_read_pos: match got_state {
-                true => 0,
-                false => 1,
-            },
+            current_read_pos: 0, // Start at 0; the protocol parser discards any spurious bytes
             last_channel_id: None,
             last_packet_len: 0,
             header_data_buff: [0x00; 4],
@@ -160,10 +175,7 @@ fn main() -> ! {
     let mut state = DriverState {
         receiver_state: ReceiverState {
             pending_receiver: None,
-            current_read_pos: match got_state {
-                true => 0,
-                false => 1,
-            }, // Ask for some reason, the first byte we read is 0x00
+            current_read_pos: 0, // Start at 0; the protocol parser discards any spurious bytes
         },
         pending_transmitter: None,
     };
