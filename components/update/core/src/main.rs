@@ -11,6 +11,7 @@ mod update;
 mod utils;
 mod consts;
 mod info;
+mod markers;
 
 use uart_channel_api::*;
 use userlib::*;
@@ -32,6 +33,8 @@ fn main() -> ! {
     }
     // Then activate
     kipc::activate_task();
+    // Initialize GPIO phase markers (PC0..PC2)
+    markers::init();
     // Immediately set the handler
     kipc::set_update_support(true);
     // Listen for the initial packet on serial

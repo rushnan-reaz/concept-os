@@ -404,9 +404,11 @@ fn add_update_core(
                 checksum: *checksum,
             };
             // Process buffer
-            relocator
-                .consume_current_buffer(data, &mut reloc_methods, *checksum_buff)
-                .map_err(|_| MessageError::FlashError)?;
+            crate::markers::set(crate::markers::RELOC);
+            let reloc_result =
+                relocator.consume_current_buffer(data, &mut reloc_methods, *checksum_buff);
+            crate::markers::clear(crate::markers::RELOC);
+            reloc_result.map_err(|_| MessageError::FlashError)?;
             Ok(())
         },
     )?;
@@ -418,9 +420,10 @@ fn add_update_core(
         num_relocations: num_relocations as usize,
         checksum: &mut new_checksum,
     };
-    relocator
-        .finish(&mut reloc_methods, &mut checksum_buff)
-        .map_err(|_| MessageError::FlashError)?;
+    crate::markers::set(crate::markers::RELOC);
+    let finish_result = relocator.finish(&mut reloc_methods, &mut checksum_buff);
+    crate::markers::clear(crate::markers::RELOC);
+    finish_result.map_err(|_| MessageError::FlashError)?;
 
     // -----------------------------------------------------------------
     //    Step 6: Receive the HBF trailer, and validate total checksum
@@ -504,14 +507,16 @@ pub fn component_add_update(channel: &mut UartChannel) -> Result<(), MessageErro
         },
         )?;
     // Process everything
-    add_update_core(
+    crate::markers::set(crate::markers::RECV);
+    let core_result = add_update_core(
         &mut methods,
         &allocation,
         checksum_offset,
         &header_base,
         &fhm,
-    )
-    .map_err(|e| {
+    );
+    crate::markers::clear(crate::markers::RECV);
+    core_result.map_err(|e| {
         // Whatever, deallocate the block
         methods.deallocate();
         // Return the error
@@ -524,7 +529,10 @@ pub fn component_add_update(channel: &mut UartChannel) -> Result<(), MessageErro
     methods.channel_write_single(ComponentUpdateResponse::Success as u8)?;
     sys_log!("Success sent, loading component");
     // Start component (this may trigger a task switch to the new component)
-    if !userlib::kipc::load_component(allocation.flash_base_address) {
+    crate::markers::set(crate::markers::INSTALL);
+    let loaded = userlib::kipc::load_component(allocation.flash_base_address);
+    crate::markers::clear(crate::markers::INSTALL);
+    if !loaded {
         sys_log!("load_component failed");
     } else {
         sys_log!("Component loaded successfully");

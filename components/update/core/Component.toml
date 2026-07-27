@@ -4,6 +4,7 @@ version = 1
 priority = 30
 flags = ['START_AT_BOOT']
 min_ram = 2048
+peripherals = ["gpiob"]
 
 # Storage
 [[dependencies]]
@@ -14,5 +15,11 @@ max_version = 0
 # UART
 [[dependencies]]
 component_id = 3
+min_version = 1
+max_version = 0
+
+# RCC
+[[dependencies]]
+component_id = 2
 min_version = 1
 max_version = 0

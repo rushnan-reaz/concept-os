@@ -1,6 +1,7 @@
 use crate::i2c::I2C_Channel;
 use bthermo_api::ThermoError;
 use userlib::sys_get_timer;
+use userlib::sys_log; // TEMPORARY DIAGNOSTIC — remove in Phase 3 if not otherwise used
 
 /**
  * TMP102
@@ -43,6 +44,7 @@ impl TMP117 {
         }
     }
     pub fn init_hardware(&mut self, i2c: &mut I2C_Channel) -> Result<(), ThermoError> {
+        sys_log!("[TMP102] using addr 0x{:02x}", TMP102_ADDR); // TEMPORARY DIAGNOSTIC — remove in Phase 3
         // The TMP102 has no device-ID register; confirm the sensor is present
         // by reading the temperature register once instead. It powers up
         // already in continuous-conversion mode, so no config write is needed.

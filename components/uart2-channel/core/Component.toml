@@ -1,0 +1,51 @@
+[component]
+id = 3
+version = 1
+priority = 15
+flags = ['START_AT_BOOT']
+min_ram = 1024
+peripherals = ["usart2","gpioa","dma1"]
+interrupts = { "usart2.irq" = 1, "dma1.irq6" = 2 }
+
+
+# RCC
+[[dependencies]]
+component_id = 2
+min_version = 1
+max_version = 0
+
+# USART2
+#[[regions]]
+#base_address = '0x40004400'
+#size = '0x0400' # 1024
+#attributes = [
+#    'READ',
+#    'WRITE',
+#    'DEVICE'
+#]
+#[[interrupts]]
+#irq = 38
+#notification_mask = '0x00000001'
+
+# GPIOA
+#[[regions]]
+#base_address = '0x48000000'
+#size = '0x0400' # 1024
+#attributes = [
+#    'READ',
+#    'WRITE',
+#    'DEVICE'
+#]
+
+# DMA1
+#[[regions]]
+#base_address = '0x40020000'
+#size = '0x0400' # 1024
+#attributes = [
+#    'READ',
+#    'WRITE',
+#    'DEVICE'
+#]
+#[[interrupts]]
+#irq = 16    # Channel 6
+#notification_mask = '0x00000002'

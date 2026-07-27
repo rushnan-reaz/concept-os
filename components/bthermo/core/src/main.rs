@@ -8,6 +8,7 @@ mod outputs;
 mod programs;
 mod state;
 mod tmp117;
+mod markers;
 
 use bthermo_api::{
     GetOutputStatusResponse, GetProgramsResponse, Operation, OutputType, Program, ReadRTCResponse,
@@ -26,13 +27,20 @@ const SLEEP_MAX_TIME_MS: u64 = 500;
 
 #[export_name = "main"]
 fn main() -> ! {
+    // Init the migration marker FIRST so PB14 is configured before get_state.
+    // On the update path init_hardware() is skipped, so GPIOB clock must be
+    // enabled here explicitly (idempotent if already on).
+    markers::init();
+
     // Prepare for state migration
     let mut transfer_buffer: [u8; core::mem::size_of::<TransferableState>()] =
         [0x00; core::mem::size_of::<TransferableState>()];
     let mut prev_state: Option<&TransferableState> = None;
+    markers::set(markers::MIGRATE);
     let transfer_result = hl::get_state(&mut transfer_buffer, (), |_, data: &TransferableState| {
         prev_state = Some(data);
     });
+    markers::clear(markers::MIGRATE);
 
     // Create a safe instance of the RCC
     let mut rcc = rcc_api::RCC::new();
@@ -77,11 +85,13 @@ fn main() -> ! {
     loop {
         // Acquire data from sensors
         let time_result = rtc.read_sensor(&mut i2c);
-        if time_result.is_err() {
+        if let Err(e) = time_result {
+            sys_log!("[MAINLOOP] rtc.read_sensor failed: {:?}", e); // TEMPORARY DIAGNOSTIC — remove in Phase 3
             error_loop(ThermoError::RTCNotConnected, Some(&mut state_manager));
         }
         let temp_result = thermo.read_temperature(&mut i2c);
-        if temp_result.is_err() {
+        if let Err(e) = temp_result {
+            sys_log!("[MAINLOOP] thermo.read_temperature failed: {:?}", e); // TEMPORARY DIAGNOSTIC — remove in Phase 3
             error_loop(ThermoError::TempNotConnected, Some(&mut state_manager));
         }
         let current_time = time_result.unwrap_lite();
@@ -121,6 +131,7 @@ fn start_up_routine(
 
     // If initialization fails, just respond to every request with the error
     if let Err(err) = init_result {
+        sys_log!("[INIT] failed: {:?}", err); // TEMPORARY DIAGNOSTIC — remove in Phase 3
         error_loop(err, None);
     }
 }
@@ -164,9 +175,31 @@ fn init_hardware(
     outputs: &mut outputs::OutputController,
 ) -> Result<(), ThermoError> {
     i2c.init_hardware(rcc)?;
-    rtc.init_hardware(i2c)?;
-    thermo.init_hardware(i2c)?;
+    sys_log!("[INIT] i2c ok"); // TEMPORARY DIAGNOSTIC — remove in Phase 3
+
+    // ===== TEMPORARY DIAGNOSTIC (fix_i2c_sensor_bus_task.md Phase 1.0) — remove in Phase 3 =====
+    // On-device bus scan: register 0x00 exists on both the TMP102 and DS3231,
+    // so a successful read means a device answered at that address. Relies on
+    // fix 2B (NACK/STOP robustness) to return cleanly instead of hanging.
+    for addr in [0x48u8, 0x49, 0x4A, 0x4B, 0x68] {
+        let mut b = [0u8; 1];
+        match i2c.i2c_mem_read(addr, 0x00, &mut b) {
+            Ok(()) => sys_log!("[SCAN] 0x{:02x} ACK (byte0=0x{:02x})", addr, b[0]),
+            Err(()) => sys_log!("[SCAN] 0x{:02x} --", addr),
+        }
+    }
+    // ===== END DIAGNOSTIC =====
+
+    let rtc_result = rtc.init_hardware(i2c);
+    sys_log!("[INIT] rtc result: {}", rtc_result.is_ok()); // TEMPORARY DIAGNOSTIC — remove in Phase 3
+    rtc_result?;
+
+    let thermo_result = thermo.init_hardware(i2c);
+    sys_log!("[INIT] thermo result: {}", thermo_result.is_ok()); // TEMPORARY DIAGNOSTIC — remove in Phase 3
+    thermo_result?;
+
     outputs.init_hardware(rcc)?;
+    sys_log!("[INIT] outputs ok"); // TEMPORARY DIAGNOSTIC — remove in Phase 3
     Ok(())
 }
 

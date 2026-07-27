@@ -90,6 +90,16 @@ attributes = [
     'DEVICE'
 ]
 
+# I2C3
+[peripheral.i2c3]
+base_address = '0x40005C00'
+size = '0x0400' # 1024
+attributes = [
+    'READ',
+    'WRITE',
+    'DEVICE'
+]
+
 # DMA1
 [peripheral.dma1]
 base_address = '0x40020000'
