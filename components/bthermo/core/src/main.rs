@@ -54,6 +54,14 @@ fn main() -> ! {
             &mut thermo,
             &mut output_controller,
         );
+    } else {
+        // State-transfer path: init_hardware()/clear_bus() are skipped
+        // entirely here, since the new instance inherits the running
+        // peripheral configuration from the old one. If an I2C transaction
+        // was mid-flight at the exact moment the task swap happened, the
+        // bus can be left stuck with no recovery path -- check for and fix
+        // that specific case without touching anything else.
+        i2c.recover_bus_if_stuck();
     }
 
     // Commit the update. If start_up_routine entered error_loop above, this

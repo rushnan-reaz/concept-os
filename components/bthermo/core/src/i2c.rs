@@ -52,6 +52,32 @@ impl<'a> I2C_Channel<'a> {
         Ok(())
     }
 
+    /// Cheap health check + recovery for the in-place update handover path,
+    /// where `init_hardware()` is skipped entirely (state transfer inherits
+    /// the running peripheral configuration from the old task instance). If
+    /// an I2C transaction was mid-flight at the exact moment the task swap
+    /// happened, the bus can be left stuck (SDA held low, or BUSY latched)
+    /// with nothing to ever clear it, since a normal boot's recovery path
+    /// never runs. Detect that specific case and recover without touching
+    /// anything else (no GPIO AF reconfiguration, no I2C peripheral reset --
+    /// those are already correctly configured, inherited from the old task).
+    pub fn recover_bus_if_stuck(&mut self) {
+        let stuck = self.gpioc.idr.read().idr1().bit_is_clear()
+            || self.i2c1.isr.read().busy().bit_is_set();
+        if !stuck {
+            return;
+        }
+        // Temporarily drive the pins as plain GPIO to force a clean STOP,
+        // exactly as at cold boot, then switch them back to AF4/I2C mode.
+        self.clear_bus();
+        self.gpioc
+            .moder
+            .modify(|_, w| w.moder0().alternate().moder1().alternate());
+        if self.i2c1.isr.read().busy().bit_is_set() {
+            self.recover_after_failure();
+        }
+    }
+
     /// Manually clear a hung I2C bus (e.g. a slave holding SDA low after a
     /// reset mid-byte). Must run before the pins are switched to AF4 -- the
     /// I2C peripheral cannot drive a valid STOP onto an already-stuck bus.
