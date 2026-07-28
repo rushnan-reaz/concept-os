@@ -45,10 +45,6 @@ fn main() -> ! {
     // Create an instance of outputs
     let mut output_controller = outputs::OutputController::new();
 
-    // Activate BEFORE hardware init so the update block is finalized even if
-    // start_up_routine enters error_loop (preventing the 30-second revert timeout).
-    kipc::activate_task();
-
     // Initialize hardware only when no previous state was received.
     if transfer_result.is_err() {
         start_up_routine(
@@ -59,6 +55,12 @@ fn main() -> ! {
             &mut output_controller,
         );
     }
+
+    // Commit the update. If start_up_routine entered error_loop above, this
+    // is never reached, so the kernel's 30-second REVERT_UPDATE_TIMEOUT will
+    // fire and roll back to the previous component version.
+    kipc::activate_task();
+
     sys_log!("[THERMOv1] Online!");
 
     // Enable state migration
