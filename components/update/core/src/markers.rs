@@ -4,9 +4,19 @@
 
 //! GPIO phase markers for delta-update profiling.
 //!
-//! Drives Port C pins PC0..PC4 HIGH for the duration of each delta phase so an
+//! Drives Port C pins HIGH for the duration of each delta phase so an
 //! external logic analyzer can time them. Writes use `BSRR` (a single atomic
 //! store, ~12.5 ns at 80 MHz) so a marker never distorts the measured path.
+//!
+//! Logical phase indices 0..4 map to physical pins via `PHASE_PIN` below --
+//! NOT a straight 1:1 PC0..PC4 mapping. PC0/PC1 are bthermo's I2C3 SCL/SDA
+//! (see components/bthermo/core/src/i2c.rs): if both components are active
+//! concurrently (a live update while the sensor loop runs), the two GPIO
+//! configs directly contend for the same physical pins and whichever inits
+//! last silently wins, making phases 0/1 unreliable to capture. Phases 0
+//! (header pull) and 1 (find base) are remapped to PC5/PC6 (free, no other
+//! component in this app uses them) to avoid that collision entirely; phases
+//! 2 (masked base-CRC), 3 (reconstruct), 4 (install) keep PC2/PC3/PC4.
 //!
 //! Gated behind the `profiling` feature — production builds compile the no-op
 //! stubs and pull in none of the GPIO/rcc dependencies.
@@ -17,8 +27,12 @@ mod imp {
     use rcc_api::{Peripheral, RCC};
     use stm32l476rg::device;
 
+    /// Logical phase index (0..=4) -> physical GPIOC pin number.
+    const PHASE_PIN: [u8; 5] = [5, 6, 2, 3, 4];
+
     /// One-time GPIOC setup: enable clock (via the rcc component) and configure
-    /// PC0..PC4 as very-high-speed push-pull outputs, starting LOW. Idempotent.
+    /// the marker pins as very-high-speed push-pull outputs, starting LOW.
+    /// Idempotent.
     pub fn markers_init() {
         let mut rcc = RCC::new();
         let _ = rcc.enable_clock(Peripheral::GPIOC);
@@ -26,65 +40,70 @@ mod imp {
 
         let gpioc = unsafe { &*device::GPIOC::PTR };
         gpioc.ospeedr.modify(|_, w| {
-            w.ospeedr0()
-                .very_high_speed()
-                .ospeedr1()
-                .very_high_speed()
-                .ospeedr2()
+            w.ospeedr2()
                 .very_high_speed()
                 .ospeedr3()
                 .very_high_speed()
                 .ospeedr4()
                 .very_high_speed()
+                .ospeedr5()
+                .very_high_speed()
+                .ospeedr6()
+                .very_high_speed()
         });
         gpioc.otyper.modify(|_, w| {
-            w.ot0()
-                .push_pull()
-                .ot1()
-                .push_pull()
-                .ot2()
+            w.ot2()
                 .push_pull()
                 .ot3()
                 .push_pull()
                 .ot4()
                 .push_pull()
+                .ot5()
+                .push_pull()
+                .ot6()
+                .push_pull()
         });
         gpioc.moder.modify(|_, w| {
-            w.moder0()
-                .output()
-                .moder1()
-                .output()
-                .moder2()
+            w.moder2()
                 .output()
                 .moder3()
                 .output()
                 .moder4()
                 .output()
+                .moder5()
+                .output()
+                .moder6()
+                .output()
         });
-        // Drive PC0..PC4 LOW to start (reset bits = high half of BSRR).
-        gpioc.bsrr.write(|w| unsafe { w.bits(0x1F << 16) });
+        // Drive all marker pins LOW to start (reset bits = high half of BSRR).
+        let mask: u32 = PHASE_PIN.iter().fold(0, |m, &p| m | (1 << p));
+        gpioc.bsrr.write(|w| unsafe { w.bits(mask << 16) });
     }
 
-    /// Drive marker `pin` (0..=4) HIGH — single atomic BSRR set, then a barrier
-    /// so the phase's work cannot be reordered *before* the pin goes high.
+    /// Drive marker for phase `n` (0..=4) HIGH -- single atomic BSRR set, then
+    /// a barrier so the phase's work cannot be reordered *before* the pin
+    /// goes high.
     ///
     /// The BSRR store has no data dependency on the bracketed work, so without
     /// these barriers `-Oz` + LTO is free to hoist/sink the set and clear until
     /// they run back-to-back, collapsing the measured pulse.
     #[inline(always)]
-    pub fn mark_set(pin: u8) {
+    pub fn mark_set(n: u8) {
+        let pin = PHASE_PIN[n as usize];
         let gpioc = unsafe { &*device::GPIOC::PTR };
         gpioc.bsrr.write(|w| unsafe { w.bits(1u32 << pin) });
         compiler_fence(Ordering::SeqCst);
         cortex_m::asm::dsb();
     }
 
-    /// Drive marker `pin` (0..=4) LOW — barrier first so the phase's work cannot
-    /// be reordered *after* the pin goes low, then the single atomic BSRR reset.
+    /// Drive marker for phase `n` (0..=4) LOW -- barrier first so the phase's
+    /// work cannot be reordered *after* the pin goes low, then the single
+    /// atomic BSRR reset.
     #[inline(always)]
-    pub fn mark_clear(pin: u8) {
+    pub fn mark_clear(n: u8) {
         compiler_fence(Ordering::SeqCst);
         cortex_m::asm::dsb();
+        let pin = PHASE_PIN[n as usize];
         let gpioc = unsafe { &*device::GPIOC::PTR };
         gpioc.bsrr.write(|w| unsafe { w.bits(1u32 << (pin as u32 + 16)) });
         compiler_fence(Ordering::SeqCst);
