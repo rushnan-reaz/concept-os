@@ -7,7 +7,7 @@ mod i2c;
 mod outputs;
 mod programs;
 mod state;
-mod tmp117;
+mod tmp102;
 
 use bthermo_api::{
     GetOutputStatusResponse, GetProgramsResponse, Operation, OutputType, Program, ReadRTCResponse,
@@ -41,7 +41,7 @@ fn main() -> ! {
     // Create instance of the RTC
     let mut rtc = ds3231::DS3231::new();
     // Create instance of Thermometer
-    let mut thermo = tmp117::TMP117::new();
+    let mut thermo = tmp102::TMP102::new();
     // Create an instance of outputs
     let mut output_controller = outputs::OutputController::new();
 
@@ -113,7 +113,7 @@ fn start_up_routine(
     rcc: &mut RCC,
     i2c: &mut i2c::I2C_Channel,
     rtc: &mut ds3231::DS3231,
-    thermo: &mut tmp117::TMP117,
+    thermo: &mut tmp102::TMP102,
     outputs: &mut outputs::OutputController,
 ) {
     // Initialize hardware
@@ -160,7 +160,7 @@ fn init_hardware(
     rcc: &mut RCC,
     i2c: &mut i2c::I2C_Channel,
     rtc: &mut ds3231::DS3231,
-    thermo: &mut tmp117::TMP117,
+    thermo: &mut tmp102::TMP102,
     outputs: &mut outputs::OutputController,
 ) -> Result<(), ThermoError> {
     i2c.init_hardware(rcc)?;

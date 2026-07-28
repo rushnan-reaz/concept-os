@@ -24,52 +24,111 @@ macro_rules! timed_loop {
 }
 
 /**
- * Pinout:
- *      D15 -> PB8 -> I2C1_SCL
- *      D14 -> PB9 -> I2C1_SDA
+ * Pinout (matches bthermo-performance's I2C wiring):
+ *      A5 -> PC0 -> I2C3_SCL
+ *      A4 -> PC1 -> I2C3_SDA
  */
 #[allow(non_camel_case_types)]
 pub struct I2C_Channel<'a> {
-    gpiob: &'a device::gpiob::RegisterBlock,
-    i2c1: &'a device::i2c1::RegisterBlock,
+    gpioc: &'a device::gpioc::RegisterBlock,
+    i2c1: &'a device::i2c1::RegisterBlock, // field name kept; points at I2C3
 }
 
 impl<'a> I2C_Channel<'a> {
     pub fn new() -> Self {
         Self {
-            gpiob: unsafe { &*device::GPIOB::PTR },
-            i2c1: unsafe { &*device::I2C1::PTR },
+            gpioc: unsafe { &*device::GPIOC::PTR },
+            i2c1: unsafe { &*device::I2C3::PTR },
         }
     }
     pub fn init_hardware(&mut self, rcc: &mut RCC) -> Result<(), ThermoError> {
+        // Enable GPIOC before touching its registers, then clear any hung bus
+        // via GPIO bit-banging BEFORE the pins are switched to AF/I2C.
+        rcc.enable_clock(rcc_api::Peripheral::GPIOC).unwrap_lite();
+        rcc.leave_reset(rcc_api::Peripheral::GPIOC).unwrap_lite();
+        self.clear_bus();
         self.init_gpio(rcc);
         self.init_i2c(rcc);
         Ok(())
     }
-    fn init_gpio(&mut self, rcc: &mut RCC) {
-        // Turn on clock and leave reset
-        rcc.enable_clock(rcc_api::Peripheral::GPIOB).unwrap_lite();
-        rcc.leave_reset(rcc_api::Peripheral::GPIOB).unwrap_lite();
-        // Select alternate function for PB8,PB9
-        self.gpiob
+
+    /// Manually clear a hung I2C bus (e.g. a slave holding SDA low after a
+    /// reset mid-byte). Must run before the pins are switched to AF4 -- the
+    /// I2C peripheral cannot drive a valid STOP onto an already-stuck bus.
+    /// PC0 = SCL, PC1 = SDA.
+    fn clear_bus(&mut self) {
+        self.gpioc
+            .pupdr
+            .modify(|_, w| w.pupdr0().pull_up().pupdr1().pull_up());
+        self.gpioc
+            .otyper
+            .modify(|_, w| w.ot0().open_drain().ot1().open_drain());
+        self.gpioc
             .moder
-            .modify(|_, w| w.moder8().alternate().moder9().alternate());
-        // Setup alternate function AF4
-        self.gpiob.afrh.modify(|_, w| w.afrh8().af4().afrh9().af4());
+            .modify(|_, w| w.moder0().output().moder1().output());
+        // Release both lines (open-drain -> high via pull-ups)
+        self.gpioc.bsrr.write(|w| w.bs0().set_bit().bs1().set_bit());
+        Self::bus_delay();
+
+        // If SDA is held low, clock SCL up to 9 times to let the slave finish.
+        let mut tries = 9;
+        while self.gpioc.idr.read().idr1().bit_is_clear() && tries > 0 {
+            self.gpioc.bsrr.write(|w| w.br0().set_bit()); // SCL low
+            Self::bus_delay();
+            self.gpioc.bsrr.write(|w| w.bs0().set_bit()); // SCL release high
+            Self::bus_delay();
+            tries -= 1;
+        }
+
+        // Manual STOP: SDA low while SCL high, then SDA high.
+        self.gpioc.bsrr.write(|w| w.br1().set_bit());
+        Self::bus_delay();
+        self.gpioc.bsrr.write(|w| w.bs0().set_bit());
+        Self::bus_delay();
+        self.gpioc.bsrr.write(|w| w.bs1().set_bit());
+        Self::bus_delay();
+    }
+
+    /// ~5 us busy delay at 80 MHz for bit-banged bus clearing.
+    fn bus_delay() {
+        for _ in 0..(RUNS_PER_US * 5) {
+            cortex_m::asm::nop();
+        }
+    }
+    fn init_gpio(&mut self, rcc: &mut RCC) {
+        // Turn on clock and leave reset for GPIOC (PC0=SCL, PC1=SDA)
+        rcc.enable_clock(rcc_api::Peripheral::GPIOC).unwrap_lite();
+        rcc.leave_reset(rcc_api::Peripheral::GPIOC).unwrap_lite();
+        // Select alternate function for PC0, PC1
+        self.gpioc
+            .moder
+            .modify(|_, w| w.moder0().alternate().moder1().alternate());
+        // Setup alternate function AF4 (I2C3) -- pins 0/1 use AFRL, not AFRH
+        self.gpioc.afrl.modify(|_, w| w.afrl0().af4().afrl1().af4());
         // Setup pins in open drain (critical for I2C)
-        self.gpiob.otyper.modify(|_,w| w.ot8().open_drain().ot9().open_drain());
+        self.gpioc.otyper.modify(|_, w| w.ot0().open_drain().ot1().open_drain());
+        // Enable internal pull-ups. Safe to enable even if the board also has
+        // external pull-ups.
+        self.gpioc.pupdr.modify(|_, w| w.pupdr0().pull_up().pupdr1().pull_up());
     }
     fn init_i2c(&mut self, rcc: &mut RCC) {
-        // Turn on I2C1 and leave reset
-        rcc.enable_clock(rcc_api::Peripheral::I2C1).unwrap();
-        rcc.leave_reset(rcc_api::Peripheral::I2C1).unwrap();
+        // Turn on I2C3 and leave reset
+        rcc.enable_clock(rcc_api::Peripheral::I2C3).unwrap();
+        rcc.leave_reset(rcc_api::Peripheral::I2C3).unwrap();
 
         // Turn off peripheral
         self.i2c1.cr1.modify(|_, w| w.pe().disabled());
 
-        // Set timing (400Khz fast mode, 300ns rise time)
-        self.i2c1.timingr.write(|w| unsafe { w.bits(0x10F0143C) }); // STM32 HAL obscure constant for FastMode 400Khz
-        
+        // Set timing (400Khz fast mode). The previous constant (0x10F0143C)
+        // was calibrated for ~16MHz I2CCLK, but I2C3SEL defaults to PCLK1
+        // (80MHz) and nothing in this codebase ever selects a different I2C3
+        // kernel clock -- a ~5x mismatch, making every SCL timing interval
+        // ~5x shorter than intended. This value is derived for I2CCLK=80MHz
+        // targeting genuine 400kHz Fast Mode (PRESC=3, SCLL=29, SCLH=19,
+        // SCLDEL=4, SDADEL=0) -- verified via logic analyzer on
+        // bthermo-performance.
+        self.i2c1.timingr.write(|w| unsafe { w.bits(0x3040131D) });
+
         // Set own address at 0
         self.i2c1
             .oar1
@@ -84,6 +143,15 @@ impl<'a> I2C_Channel<'a> {
             .modify(|_, w| w.gcen().enabled().nostretch().enabled());
         // Enable I2C
         self.i2c1.cr1.modify(|_, w| w.pe().enabled());
+
+        // STM32 I2Cv2 errata: if SDA reads low at the instant PE is set (e.g.
+        // right after the GPIO->AF4 mode transition on these open-drain
+        // pins), the peripheral can latch BUSY permanently, silently
+        // refusing to generate a START on the first real transaction until
+        // something forces a STOP. Clear it here, at init time.
+        if self.i2c1.isr.read().busy().bit_is_set() {
+            self.recover_after_failure();
+        }
     }
 
     pub fn i2c_mem_read(
@@ -96,7 +164,9 @@ impl<'a> I2C_Channel<'a> {
         if data.len() > u8::MAX as usize {
             panic!("Too much data in a single packet");
         }
-        // Request memory
+        // Request memory (a complete, auto-ended write transaction -- see
+        // _i2c_select_register). The bus is idle by the time this returns,
+        // so the read below is a fresh START, not a repeated-START.
         self._i2c_select_register(device_address, mem_address)?;
 
         // Configure reception
@@ -170,31 +240,83 @@ impl<'a> I2C_Channel<'a> {
         device_address: u8,
         mem_address: u8,
     ) -> Result<(), ()> {
-        // Configure CR2
+        // Rewritten as a complete, self-contained, AUTOEND=automatic write
+        // transaction (address + the single register-pointer byte, then a
+        // hardware-generated STOP) instead of the original software-AUTOEND
+        // sequence (which also had NBYTES=8, wrong for a 1-byte
+        // register-pointer write). Ported from bthermo-performance's fixed
+        // I2C3 implementation.
         self.i2c1.cr2.modify(|_, w| {
             w.sadd()
                 .bits((device_address << 1 | 0) as u16)
                 .nbytes()
-                .bits(8) // The memory address
+                .bits(1) // The memory address
                 .autoend()
-                .software()
+                .automatic()
                 .rd_wrn()
                 .write()
                 .start()
                 .start()
-                .stop()
-                .no_stop()
         });
-        // Wait to be ready
-        timed_loop!(self.i2c1.isr.read().txis().is_empty());
+        self.wait_or_recover(|isr| isr.txis().bit_is_set())?;
         // Put address on the tx reg
         self.i2c1.txdr.write(|w| w.txdata().bits(mem_address));
-        // Wait until transfer completes
-        timed_loop!(self.i2c1.isr.read().txis().is_empty());
-        // Put a stop
-        self.i2c1
-            .cr2
-            .modify(|_, w| w.start().no_start().stop().stop());
+        // With AUTOEND=automatic, hardware generates the STOP itself once
+        // this single byte is transferred. Wait for it so the bus is known
+        // idle before the caller issues its own fresh START.
+        self.wait_or_recover(|isr| isr.stopf().bit_is_set())?;
+        self.i2c1.icr.write(|w| w.stopcf().clear());
         Ok(())
+    }
+
+    /// Busy-wait (same ~4ms budget as `timed_loop!`) for `condition` on the
+    /// ISR register, bailing out early if NACKF is observed. On NACK or
+    /// timeout, apply the ES0250 (STM32L471/475/476/486 errata) SS2.20.9
+    /// workaround instead of forcing a manual STOP -- see `pe_toggle_recover`.
+    fn wait_or_recover(
+        &mut self,
+        condition: impl Fn(&device::i2c1::isr::R) -> bool,
+    ) -> Result<(), ()> {
+        for _ in 0..(RUNS_PER_US * TIMED_LOOP_US) {
+            cortex_m::asm::nop();
+            let isr = self.i2c1.isr.read();
+            if isr.nackf().bit_is_set() {
+                self.pe_toggle_recover();
+                return Err(());
+            }
+            if condition(&isr) {
+                return Ok(());
+            }
+        }
+        // Timed out without ever seeing the condition or a NACK.
+        self.recover_after_failure();
+        Err(())
+    }
+
+    /// Force a STOP condition and clear NACKF/STOPF so a failed/timed-out
+    /// transaction never leaves the bus held for the next transaction.
+    fn recover_after_failure(&mut self) {
+        self.i2c1.cr2.modify(|_, w| w.stop().stop());
+        for _ in 0..(RUNS_PER_US * TIMED_LOOP_US) {
+            cortex_m::asm::nop();
+            if self.i2c1.isr.read().stopf().bit_is_set() {
+                break;
+            }
+        }
+        self.i2c1
+            .icr
+            .write(|w| w.stopcf().clear().nackcf().clear());
+    }
+
+    /// ES0250 (STM32L471/475/476/486 errata) SS2.20.9 "Transmission stalled
+    /// after first byte transfer": if NACKF is observed together with RXNE
+    /// right after the first byte of a transfer, the interface can stall
+    /// (or -- matching what was observed on bthermo-performance -- latch a
+    /// NACKF that forces the recovery path to fire even though the bus
+    /// itself shows a real ACK). ST's documented workaround is not a
+    /// bus-level STOP; it's a full peripheral disable/re-enable via CR1.PE.
+    fn pe_toggle_recover(&mut self) {
+        self.i2c1.cr1.modify(|_, w| w.pe().disabled());
+        self.i2c1.cr1.modify(|_, w| w.pe().enabled());
     }
 }
