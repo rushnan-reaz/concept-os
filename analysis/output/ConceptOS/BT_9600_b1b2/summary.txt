@@ -1,0 +1,32 @@
+file          ok           RECV    INSTALL    MIGRATE   RELOC_tot  RELOC_n
+--------------------------------------------------------------------------
+run01.sr      yes      29.9000s    623.5us     81.5us   189.905ms      143
+run02.sr      yes      29.8662s    629.0us     81.5us   190.000ms      143
+run03.sr      yes      29.8511s    629.5us     81.0us   189.932ms      143
+run04.sr      yes      29.8287s    629.0us     81.5us   189.890ms      143
+run05.sr      yes      29.8078s    623.0us     81.5us   189.904ms      143
+
+=== mean +/- sd over 5 complete run(s) ===
+  RECV             29.8508s  +/-   35.337ms   (CV  0.1%, n=5)
+  INSTALL           626.8us  +/-      3.3us   (CV  0.5%, n=5)
+  MIGRATE            81.4us  +/-      0.2us   (CV  0.3%, n=5)
+  RELOC_total     189.926ms  +/-     44.1us   (CV  0.0%, n=5)
+  RELOC_n             143.0  (min 143, max 143)
+
+=== PB0 component-level unavailability (Task B1) ===
+run01: 901.5 us
+run02: 901.5 us
+run03: 901.0 us
+run04: 901.0 us
+run05: 901.0 us
+mean +/- sd: 901.2 +/- 0.27 us (n=5)
+
+=== PB7 system-level unavailability / flash erase (Task B2) ===
+run01: 8 erases, total 175.67 ms
+run02: 8 erases, total 175.66 ms
+run03: 8 erases, total 175.65 ms
+run04: 8 erases, total 175.67 ms
+run05: 8 erases, total 175.66 ms
+mean +/- sd (total per update): 175.662 +/- 0.008 ms (n=5)
+per-erase mean: ~21.96 ms, matching VCP@9600 result exactly (transport-independent,
+as expected — flash erase is a fixed hardware/kernel operation)

@@ -1299,7 +1299,9 @@ impl FlashInterface {
         task_map: &mut TaskIndexes,
         page_num: u16,
     ) -> Result<NextTask, ()> {
+        crate::profiling::event_flash_erase_begin();
         let result = self.native_methods.erase(page_num);
+        crate::profiling::event_flash_erase_end();
         let switch = advance_time(task_list, task_map, FLASH_ERASE_MS);
         // Always try to schedule something else. Watch for a specific, in case some timer fires
         return match switch {

@@ -1,0 +1,22 @@
+file          ok           RECV    INSTALL    MIGRATE   RELOC_tot  RELOC_n
+--------------------------------------------------------------------------
+run01.sr      yes      20.5146s    618.5us     81.0us   189.323ms      143
+run02.sr      yes      20.4887s    624.5us     81.0us   189.275ms      143
+run03.sr      yes      20.4584s    624.0us     81.0us   189.658ms      143
+run04.sr      yes      20.4499s    624.0us     81.0us   189.428ms      143
+run05.sr      yes      20.4944s    624.0us     81.0us   189.234ms      143
+
+=== mean +/- sd over 5 complete run(s) ===
+  RECV             20.4812s  +/-   26.682ms   (CV  0.1%, n=5)
+  INSTALL           623.0us  +/-      2.5us   (CV  0.4%, n=5)
+  MIGRATE            81.0us  +/-          0   (CV  0.0%, n=5)
+  RELOC_total     189.383ms  +/-    169.4us   (CV  0.1%, n=5)
+  RELOC_n             143.0  (min 143, max 143)
+
+=== PB0 component-level unavailability (Task B1) ===
+run01: 902.5 us
+run02: 902.0 us
+run03: 902.5 us
+run04: 902.0 us
+run05: 902.0 us
+mean +/- sd: 902.2 +/- 0.27 us (CV 0.03%, n=5)

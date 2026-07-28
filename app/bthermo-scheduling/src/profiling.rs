@@ -31,6 +31,10 @@ static EVENT_TABLE: EventsTable = EventsTable {
     timer_isr_enter: timer_isr_enter_profile,
     timer_isr_exit: timer_isr_exit_profile,
     context_switch: context_switch,
+    task_update_begin: |_| (),
+    task_update_end: |_| (),
+    flash_erase_begin: || (),
+    flash_erase_end: || (),
 };
 
 pub fn configure_profiling() {
@@ -148,9 +152,10 @@ fn timer_isr_exit_profile() {
 
 fn context_switch(component_id: u16) {
     let gpioc = unsafe { &*device::GPIOC::PTR };
-    // Write the lowest 4 bits of the component_id
+    // Write the lowest 4 bits of the component_id into PC4-7, preserving
+    // PC0-3 (syscall/ISR markers) untouched.
     let id_4bits = ((component_id & 0b1111) << 4) as u32;
     gpioc.odr.modify(|r, w| unsafe {w.bits(
-        (r.bits() & (0b0000_u32 << 4_u32)) | id_4bits
+        (r.bits() & !(0b1111_u32 << 4_u32)) | id_4bits
     )});
 }

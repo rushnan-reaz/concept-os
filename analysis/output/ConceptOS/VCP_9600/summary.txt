@@ -1,0 +1,14 @@
+file          ok           RECV    INSTALL    MIGRATE   RELOC_tot  RELOC_n
+--------------------------------------------------------------------------
+run01.sr      yes      20.5163s    704.5us     81.0us   189.039ms      143
+run02.sr      yes      20.5854s    704.5us     81.5us   189.076ms      143
+run03.sr      yes      20.6332s    704.5us     81.5us   189.552ms      143
+run04.sr      yes      20.6748s    704.5us     81.0us   189.431ms      143
+run05.sr      yes      20.7087s    698.5us     81.5us   189.099ms      143
+
+=== mean +/- sd over 5 complete run(s) ===
+  RECV             20.6237s  +/-   75.705ms   (CV  0.4%, n=5)
+  INSTALL           703.3us  +/-      2.7us   (CV  0.4%, n=5)
+  MIGRATE            81.3us  +/-      0.3us   (CV  0.3%, n=5)
+  RELOC_total     189.239ms  +/-    235.5us   (CV  0.1%, n=5)
+  RELOC_n             143.0  (min 143, max 143)

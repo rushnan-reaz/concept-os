@@ -140,8 +140,15 @@ impl<'a> I2C_Channel<'a> {
         // Turn off peripheral
         self.i2c1.cr1.modify(|_, w| w.pe().disabled());
 
-        // Set timing (400Khz fast mode, 300ns rise time)
-        self.i2c1.timingr.write(|w| unsafe { w.bits(0x10F0143C) }); // STM32 HAL obscure constant for FastMode 400Khz
+        // Set timing (400Khz fast mode). The previous constant (0x10F0143C)
+        // was calibrated for ~16MHz I2CCLK, but I2C3SEL defaults to PCLK1
+        // (80MHz) and nothing in this codebase ever selects a different I2C3
+        // kernel clock — a ~5x mismatch, making every SCL timing interval
+        // ~5x shorter than intended. This value is derived for I2CCLK=80MHz
+        // targeting genuine 400kHz Fast Mode (PRESC=3, SCLL=29, SCLH=19,
+        // SCLDEL=4, SDADEL=0) — verify against a logic analyzer capture of
+        // actual SCL frequency, not blindly trusted.
+        self.i2c1.timingr.write(|w| unsafe { w.bits(0x3040131D) });
         
         // Set own address at 0
         self.i2c1
@@ -157,6 +164,17 @@ impl<'a> I2C_Channel<'a> {
             .modify(|_, w| w.gcen().enabled().nostretch().enabled());
         // Enable I2C
         self.i2c1.cr1.modify(|_, w| w.pe().enabled());
+
+        // STM32 I2Cv2 errata: if SDA reads low at the instant PE is set (e.g.
+        // right after the GPIO->AF4 mode transition on these open-drain
+        // pins), the peripheral can latch BUSY permanently, silently
+        // refusing to generate a START on the first real transaction until
+        // something forces a STOP. Clear it here, at init time, instead of
+        // letting the first caller (thermo/rtc init) absorb a ~23ms timeout
+        // and a spurious failure.
+        if self.i2c1.isr.read().busy().bit_is_set() {
+            self.recover_after_failure();
+        }
     }
 
     pub fn i2c_mem_read(
@@ -169,7 +187,9 @@ impl<'a> I2C_Channel<'a> {
         if data.len() > u8::MAX as usize {
             panic!("Too much data in a single packet");
         }
-        // Request memory
+        // Request memory (a complete, auto-ended write transaction — see
+        // _i2c_select_register). The bus is idle by the time this returns,
+        // so the read below is a fresh START, not a repeated-START.
         self._i2c_select_register(device_address, mem_address)?;
 
         // Configure reception
@@ -245,38 +265,36 @@ impl<'a> I2C_Channel<'a> {
         device_address: u8,
         mem_address: u8,
     ) -> Result<(), ()> {
-        // Configure CR2. NBYTES=1: this phase transfers exactly one byte
-        // (the memory/register address) before the repeated START for the
-        // actual read/write. It was previously hardcoded to 8, which mismatched
-        // the single byte actually written and left NBYTES unsatisfied — with
-        // software AUTOEND this stalls the bus state for every subsequent
-        // transaction, on every I2C device.
+        // Rewritten as a complete, self-contained, AUTOEND=automatic write
+        // transaction (address + the single register-pointer byte, then a
+        // hardware-generated STOP) — the same proven pattern already used by
+        // i2c_mem_write, instead of software-AUTOEND + a later
+        // software-triggered repeated-START. The repeated-START approach
+        // reliably produced an immediate hardware auto-STOP right after the
+        // address phase (before the register-pointer byte ever transmitted)
+        // across every variation tried; TMP102 does not require a strict
+        // repeated-START between register-select and the read, so the
+        // caller (i2c_mem_read) issues its own fresh START afterward instead.
         self.i2c1.cr2.modify(|_, w| {
             w.sadd()
                 .bits((device_address << 1 | 0) as u16)
                 .nbytes()
                 .bits(1) // The memory address
                 .autoend()
-                .software()
+                .automatic()
                 .rd_wrn()
                 .write()
                 .start()
                 .start()
-                .stop()
-                .no_stop()
         });
-        // Wait to be ready. This phase uses software AUTOEND, so unlike
-        // i2c_mem_read's data phase (AUTOEND=automatic, hardware auto-STOPs on
-        // NACK) a NACK or timeout here leaves the bus held with no STOP unless
-        // we force one — which would corrupt every subsequent transaction, on
-        // any device on the bus, not just this one.
         self.wait_or_recover(|isr| isr.txis().bit_is_set())?;
         // Put address on the tx reg
         self.i2c1.txdr.write(|w| w.txdata().bits(mem_address));
-        // Wait until the single NBYTES-specified byte has been fully
-        // transferred (TC, not TXIS again — TXIS won't re-assert once NBYTES
-        // is satisfied under software AUTOEND).
-        self.wait_or_recover(|isr| isr.tc().is_complete())?;
+        // With AUTOEND=automatic, hardware generates the STOP itself once
+        // this single byte is transferred. Wait for it so the bus is known
+        // idle before the caller issues its own fresh START.
+        self.wait_or_recover(|isr| isr.stopf().bit_is_set())?;
+        self.i2c1.icr.write(|w| w.stopcf().clear());
         Ok(())
     }
 
@@ -294,7 +312,9 @@ impl<'a> I2C_Channel<'a> {
             if isr.nackf().bit_is_set() {
                 // TEMPORARY DIAGNOSTIC line — remove in Phase 3
                 self.log_i2c_state("select_register_nack");
-                self.recover_after_failure();
+                // ES0250 §2.20.9 workaround (see pe_toggle_recover) instead
+                // of forcing a manual STOP.
+                self.pe_toggle_recover();
                 return Err(());
             }
             if condition(&isr) {
@@ -339,5 +359,17 @@ impl<'a> I2C_Channel<'a> {
         self.i2c1
             .icr
             .write(|w| w.stopcf().clear().nackcf().clear());
+    }
+
+    /// ES0250 (STM32L471/475/476/486 errata) §2.20.9 "Transmission stalled
+    /// after first byte transfer": if NACKF is observed together with RXNE
+    /// right after the first byte of a transfer, the interface can stall
+    /// (or — matching what we observe here — latch a NACKF that forces our
+    /// own recovery path to fire even though the bus itself shows a real
+    /// ACK). ST's documented workaround is not a bus-level STOP; it's a
+    /// full peripheral disable/re-enable via CR1.PE.
+    fn pe_toggle_recover(&mut self) {
+        self.i2c1.cr1.modify(|_, w| w.pe().disabled());
+        self.i2c1.cr1.modify(|_, w| w.pe().enabled());
     }
 }

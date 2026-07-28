@@ -1,0 +1,32 @@
+file          ok           RECV    INSTALL    MIGRATE   RELOC_tot  RELOC_n
+--------------------------------------------------------------------------
+run01.sr      yes      20.5203s    623.0us     81.5us   189.031ms      143
+run02.sr      yes      20.5453s    623.0us     81.0us   189.367ms      143
+run03.sr      yes      20.4912s    629.5us     81.0us   189.403ms      143
+run04.sr      yes      20.4823s    629.0us     81.0us   189.136ms      143
+run05.sr      yes      20.5717s    629.0us     81.5us   189.025ms      143
+
+=== mean +/- sd over 5 complete run(s) ===
+  RECV             20.5222s  +/-   37.186ms   (CV  0.2%, n=5)
+  INSTALL           626.7us  +/-      3.4us   (CV  0.5%, n=5)
+  MIGRATE            81.2us  +/-      0.3us   (CV  0.3%, n=5)
+  RELOC_total     189.192ms  +/-    181.9us   (CV  0.1%, n=5)
+  RELOC_n             143.0  (min 143, max 143)
+
+=== PB0 component-level unavailability (Task B1) ===
+run01: 901.5 us
+run02: 901.0 us
+run03: 901.5 us
+run04: 901.5 us
+run05: 902.0 us
+mean +/- sd: 901.5 +/- 0.35 us (n=5)
+
+=== PB7 system-level unavailability / flash erase (Task B2) ===
+run01: 8 erases, total 175.67 ms
+run02: 8 erases, total 175.67 ms
+run03: 8 erases, total 175.64 ms
+run04: 8 erases, total 175.67 ms
+run05: 8 erases, total 175.64 ms
+mean +/- sd (total per update): 175.658 +/- 0.015 ms (n=5)
+per-erase mean: ~21.96 ms (8 erases consistently, page-count matches the 9424B
+HBF requiring 8 flash pages at this board's page size)

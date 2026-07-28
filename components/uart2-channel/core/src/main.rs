@@ -19,7 +19,7 @@ use stm32l432kc::device;
 use stm32l476rg::device;
 
 // Baudrate used during communication
-const BAUDRATE: u32 = 115_200;
+const BAUDRATE: u32 = 9_600;
 const USART_IRQ_MASK: u32 = 0b0000_0000_0000_0001;
 const DMA1_CH6_IRQ_MASK: u32 = 0b0000_0000_0000_0010;
 const TIMEOUT_MASK: u32 = 0b1000_0000_0000_0000;

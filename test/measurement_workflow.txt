@@ -1,0 +1,97 @@
+Automated GPIO-marker measurement workflow — operating-point capture instructions
+====================================================================================
+
+Baud rate note (2026-07-28)
+----------------------------
+The HC-06 module was permanently reconfigured from 9600 to 115200 baud via
+AT+BAUD8 (sent directly over the wired UART3 link at boot, since the module
+only accepts AT commands with no active BT connection). This is a hardware
+change to the module itself, not just firmware config — it persists across
+reflashes and power cycles. components/uart3-channel/core/src/main.rs and
+utils/mqtt_adapter/settings.yaml are both now set to 115200 to match.
+There is no more BT@9600 operating point going forward; both transports run
+at 115200 baud now (App.toml/uart3-channel for BT, App.vcp.toml/uart2-channel
+for VCP). VCP@9600 remains available as a deliberately-slower reference point
+if still useful, but BT can no longer be run at 9600 without re-issuing
+AT+BAUD1 (9600) to the module and reverting both config files.
+
+Correctness trap (why the loop must reflash v1 before every run)
+------------------------------------------------------------------
+After run 1 flashes v2, the device is running v2. Running the OTA update again
+on runs 2-5 would be updating v2-over-v2, which is not the same measurement as
+a fresh v1 -> v2 update, and may also hit the component version check. Each run
+must reflash the v1 BASE first, then OTA to v2.
+
+flash_output_test_vcp.sh handles the reflash correctly: build the base image
+once, and it re-flashes v1 via ST-Link at the start of each run.
+
+Workflow
+--------
+1. Build the base image once (so the loop can re-flash it fast):
+
+   cd /home/rushnan-reaz/concept-os
+   ./test/flash_output_test_vcp.sh
+
+2. Edit the CONFIG block in test/capture_runs.sh for the operating point being
+   measured:
+   - OTA_CMD port: /dev/ttyACM0 for VCP, /dev/rfcomm0 for BT
+   - APP_CFG / BASE_IHEX must match that transport's app config (App.vcp.toml
+     vs App.toml)
+   - Firmware in this repo runs with the "multi-support" framing, which only
+     the mqtt_adapter bridge implements. OTA_CMD must go through
+     update-tool-mqtt + the matching mqtt_adapter bridge (settings_vcp.yaml
+     for VCP /dev/ttyACM0, settings.yaml for BT /dev/rfcomm0) — driving
+     update-tool-uart directly against the raw serial port will hang.
+
+3. Run 5 captures:
+
+   ./test/capture_runs.sh VCP_115200 5
+
+   Each iteration: reflash v1 -> start capture -> OTA to v2 -> settle -> stop
+   capture. Files land in analysis/output/ConceptOS/<LABEL>/run01..05.sr, with
+   a manifest.csv logging HBF bytes, transport command, and timestamp per run.
+
+   Note: sigrok-cli's --continuous mode reads a keypress from stdin to know
+   when to stop; backgrounded/non-interactive it either gets SIGTTIN-stopped
+   or exits immediately on stdin EOF, producing an empty capture either way.
+   capture_runs.sh uses --time <duration> instead, which never touches stdin.
+   Duration must comfortably exceed CAP_LEAD + slowest expected RECV +
+   TAIL_SETTLE (VCP@9600 RECV is ~20s; use that as the slow-end reference now
+   that BT is 115200 too) — pad generously, since a capture that's too short
+   silently clips the tail.
+
+4. Aggregate:
+
+   python3 analysis/pulseview-decoders/runs/aggregate_runs.py analysis/output/ConceptOS/VCP_115200
+
+   Produces the per-run table (with CLIP flags for incomplete captures) plus
+   mean +/- sd and CV% for RECV, INSTALL, MIGRATE, RELOC_total, and the
+   fragment count.
+
+5. Compare multiple operating points side by side:
+
+   python3 analysis/pulseview-decoders/runs/compare_operating_points.py \
+     analysis/output/ConceptOS/BT_115200 \
+     analysis/output/ConceptOS/VCP_115200 \
+     analysis/output/ConceptOS/VCP_9600
+
+Three things to get right
+--------------------------
+1. The base reflash is the correctness point. Without it, runs 2-5 update
+   v2-over-v2. The script does it first every iteration — don't remove it.
+2. Transport must match on both ends. The base image's app config (VCP vs BT)
+   has to match the OTA port/bridge, or the device won't be listening where
+   the tool is sending. That's why APP_CFG/BASE_IHEX and OTA_CMD are edited
+   together per operating point.
+3. Bluetooth + reset caveat: reflashing resets the MCU, which can drop the
+   rfcomm SPP link. For BT runs you may need to re-bind /dev/rfcomm0 between
+   iterations (there's a marked spot in the script). VCP over ST-Link is more
+   deterministic for an unattended x5 loop — run the VCP operating points
+   automated and do BT more watchfully.
+
+Marker map (for reference)
+---------------------------
+D2 = RECV     (PB2,  update component)  — whole reception span
+D3 = INSTALL  (PB1,  update component)  — kernel activation pulse
+D4 = MIGRATE  (PB14, bthermo component) — v2 state-pull pulse just after INSTALL
+D5 = RELOC    (PB15, update component)  — relocate+write bursts nested in RECV

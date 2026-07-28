@@ -31,6 +31,10 @@ static EVENT_TABLE: EventsTable = EventsTable {
     timer_isr_enter: timer_isr_enter_profile,
     timer_isr_exit: timer_isr_exit_profile,
     context_switch: context_switch,
+    task_update_begin: |_| (),
+    task_update_end: |_| (),
+    flash_erase_begin: || (),
+    flash_erase_end: || (),
 };
 
 pub fn configure_profiling() {
