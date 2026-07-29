@@ -59,22 +59,21 @@ impl<'a> I2C_Channel<'a> {
     /// happened, the bus can be left stuck (SDA held low, or BUSY latched)
     /// with nothing to ever clear it, since a normal boot's recovery path
     /// never runs. Detect that specific case and recover without touching
-    /// anything else (no GPIO AF reconfiguration, no I2C peripheral reset --
-    /// those are already correctly configured, inherited from the old task).
+    /// anything else (no I2C peripheral reset -- already correctly
+    /// configured, inherited from the old task).
+    ///
+    /// Delegates to `i2c_bus_recovery`, a generic (peripheral/pin-agnostic)
+    /// helper shared across any component that owns an I2C bus -- see that
+    /// crate for why this can't be centralized in the kernel or reach across
+    /// component boundaries to recover a bus it doesn't itself own.
     pub fn recover_bus_if_stuck(&mut self) {
-        let stuck = self.gpioc.idr.read().idr1().bit_is_clear()
-            || self.i2c1.isr.read().busy().bit_is_set();
-        if !stuck {
-            return;
-        }
-        // Temporarily drive the pins as plain GPIO to force a clean STOP,
-        // exactly as at cold boot, then switch them back to AF4/I2C mode.
-        self.clear_bus();
-        self.gpioc
-            .moder
-            .modify(|_, w| w.moder0().alternate().moder1().alternate());
-        if self.i2c1.isr.read().busy().bit_is_set() {
-            self.recover_after_failure();
+        unsafe {
+            i2c_bus_recovery::recover_i2c_bus_if_stuck(
+                device::GPIOC::PTR as u32,
+                device::I2C3::PTR as u32,
+                0, // PC0 = SCL
+                1, // PC1 = SDA
+            );
         }
     }
 

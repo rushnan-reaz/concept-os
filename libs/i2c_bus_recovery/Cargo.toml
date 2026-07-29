@@ -1,0 +1,7 @@
+[package]
+name = "i2c-bus-recovery"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cortex-m = { version = "0.7", features = ["inline-asm"] }

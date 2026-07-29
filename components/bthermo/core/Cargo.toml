@@ -16,6 +16,7 @@ heapless = "0.7.16"
 ringbuffer = {version="0.8.5", default-features = false}
 # Component dependencies
 rcc-api = {path = "../../rcc/api"}
+i2c-bus-recovery = {path = "../../../libs/i2c_bus_recovery"}
 
 # Device-specific dependencies.
 # Each board supported will have its section below
