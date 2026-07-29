@@ -8,15 +8,16 @@
 //! external logic analyzer can time them. Writes use `BSRR` (a single atomic
 //! store, ~12.5 ns at 80 MHz) so a marker never distorts the measured path.
 //!
-//! Logical phase indices 0..4 map to physical pins via `PHASE_PIN` below --
-//! NOT a straight 1:1 PC0..PC4 mapping. PC0/PC1 are bthermo's I2C3 SCL/SDA
+//! Logical phase indices 0..5 map to physical pins via `PHASE_PIN` below --
+//! NOT a straight 1:1 PC0..PC5 mapping. PC0/PC1 are bthermo's I2C3 SCL/SDA
 //! (see components/bthermo/core/src/i2c.rs): if both components are active
 //! concurrently (a live update while the sensor loop runs), the two GPIO
 //! configs directly contend for the same physical pins and whichever inits
 //! last silently wins, making phases 0/1 unreliable to capture. Phases 0
 //! (header pull) and 1 (find base) are remapped to PC5/PC6 (free, no other
 //! component in this app uses them) to avoid that collision entirely; phases
-//! 2 (masked base-CRC), 3 (reconstruct), 4 (install) keep PC2/PC3/PC4.
+//! 2 (masked base-CRC), 3 (reconstruct), 4 (install) keep PC2/PC3/PC4. Phase
+//! 5 (scratch flash allocation) uses PC7, also free.
 //!
 //! Gated behind the `profiling` feature — production builds compile the no-op
 //! stubs and pull in none of the GPIO/rcc dependencies.
@@ -27,8 +28,8 @@ mod imp {
     use rcc_api::{Peripheral, RCC};
     use stm32l476rg::device;
 
-    /// Logical phase index (0..=4) -> physical GPIOC pin number.
-    const PHASE_PIN: [u8; 5] = [5, 6, 2, 3, 4];
+    /// Logical phase index (0..=5) -> physical GPIOC pin number.
+    const PHASE_PIN: [u8; 6] = [5, 6, 2, 3, 4, 7];
 
     /// One-time GPIOC setup: enable clock (via the rcc component) and configure
     /// the marker pins as very-high-speed push-pull outputs, starting LOW.
@@ -50,6 +51,8 @@ mod imp {
                 .very_high_speed()
                 .ospeedr6()
                 .very_high_speed()
+                .ospeedr7()
+                .very_high_speed()
         });
         gpioc.otyper.modify(|_, w| {
             w.ot2()
@@ -61,6 +64,8 @@ mod imp {
                 .ot5()
                 .push_pull()
                 .ot6()
+                .push_pull()
+                .ot7()
                 .push_pull()
         });
         gpioc.moder.modify(|_, w| {
@@ -74,13 +79,15 @@ mod imp {
                 .output()
                 .moder6()
                 .output()
+                .moder7()
+                .output()
         });
         // Drive all marker pins LOW to start (reset bits = high half of BSRR).
         let mask: u32 = PHASE_PIN.iter().fold(0, |m, &p| m | (1 << p));
         gpioc.bsrr.write(|w| unsafe { w.bits(mask << 16) });
     }
 
-    /// Drive marker for phase `n` (0..=4) HIGH -- single atomic BSRR set, then
+    /// Drive marker for phase `n` (0..=5) HIGH -- single atomic BSRR set, then
     /// a barrier so the phase's work cannot be reordered *before* the pin
     /// goes high.
     ///
@@ -96,7 +103,7 @@ mod imp {
         cortex_m::asm::dsb();
     }
 
-    /// Drive marker for phase `n` (0..=4) LOW -- barrier first so the phase's
+    /// Drive marker for phase `n` (0..=5) LOW -- barrier first so the phase's
     /// work cannot be reordered *after* the pin goes low, then the single
     /// atomic BSRR reset.
     #[inline(always)]

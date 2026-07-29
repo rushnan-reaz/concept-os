@@ -72,8 +72,9 @@ pub fn component_add_delta_update(channel: &mut UartChannel) -> Result<(), Messa
         }
     }
 
-    // Allocate scratch for the reconstructed image (flash only, ram_size = 0).
+    // PC7: allocate scratch flash for the reconstructed image (ram_size = 0).
     let scratch = {
+        let _m = Marker::new(5);
         let mut storage = Storage::new();
         storage
             .allocate_component(header.target_size, 0)
