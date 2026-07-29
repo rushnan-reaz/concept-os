@@ -60,6 +60,26 @@ pub struct EventsTable {
 
     /// Called whenever the current task changes, with the current component identifier
     pub context_switch: fn(u16),
+
+    /// Called when the kernel begins tearing down a task for an in-place
+    /// component update (`Task::begin_update`), with the component id being
+    /// replaced. Deterministic and hook-independent of the scheduler, unlike
+    /// `context_switch` -- fires exactly once per update, regardless of
+    /// whether the task is ever re-selected as "current" in between.
+    pub task_update_begin: fn(u16),
+    /// Called when the kernel finishes an in-place component update
+    /// (`Task::end_update`), with the (possibly new) component id now
+    /// active. Deterministic, same rationale as `task_update_begin`.
+    pub task_update_end: fn(u16),
+
+    /// Called immediately before/after the kernel issues a physical flash
+    /// page erase (`FlashInterface::erase_timed`, which wraps the native
+    /// hardware erase call). This is system-level unavailability: the flash
+    /// controller blocks bus access for the whole MCU while an erase is in
+    /// progress, so nothing at all can be scheduled during this window --
+    /// not just the calling (storage) task.
+    pub flash_erase_begin: fn(),
+    pub flash_erase_end: fn(),
 }
 
 /// Supplies the kernel with an events table.
@@ -149,5 +169,29 @@ pub(crate) fn event_timer_isr_exit() {
 pub(crate) fn event_context_switch(id: u16) {
     if let Some(t) = table() {
         (t.context_switch)(id)
+    }
+}
+
+pub(crate) fn event_task_update_begin(id: u16) {
+    if let Some(t) = table() {
+        (t.task_update_begin)(id)
+    }
+}
+
+pub(crate) fn event_task_update_end(id: u16) {
+    if let Some(t) = table() {
+        (t.task_update_end)(id)
+    }
+}
+
+pub(crate) fn event_flash_erase_begin() {
+    if let Some(t) = table() {
+        (t.flash_erase_begin)()
+    }
+}
+
+pub(crate) fn event_flash_erase_end() {
+    if let Some(t) = table() {
+        (t.flash_erase_end)()
     }
 }

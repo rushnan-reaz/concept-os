@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 multi-support = ["dep:heapless", "uart-channel-api/multi-support"]
+baud-9600 = []
 log-itm = ["userlib/log-itm"]
 log-semihosting = ["cortex-m-semihosting", "userlib/log-semihosting"]
 board_stm32f303re = ["rcc-api/stm32f303re", "dep:stm32f303re"]

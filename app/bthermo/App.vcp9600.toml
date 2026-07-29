@@ -1,0 +1,27 @@
+name = "bthermo"
+board = "stm32l476rg"
+kernel_ram = 6656
+clock_speed = 80000000
+strip_panics = false
+
+[components.idle]
+features = ["log-itm"]
+
+[components.bthermo]
+features = []
+
+[components.bthermo-controller]
+features = []
+
+[components.rcc]
+features = ["log-itm"]
+
+[components.storage]
+features = ["log-itm"]
+
+# Temporary transport swap for ST-Link VCP tests, forced to 9600 baud
+[components.uart2-channel]
+features = ["log-itm", "multi-support", "baud-9600"]
+
+[components.update]
+features = ["log-itm", "multi-support", "profiling"]

@@ -1,0 +1,14 @@
+logger:
+  enable: true
+  level: "DEBUG"
+
+serial:
+  port_name: /dev/ttyACM0
+  baudrate: 115200
+
+mqtt:
+  server_ip: "127.0.0.1"
+  server_port: 1883
+  username: "mqtt"
+  password: "mqtt"
+  root_topic: "bthermo_vcp"

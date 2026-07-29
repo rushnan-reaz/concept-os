@@ -418,6 +418,7 @@ impl Task {
     }
 
     pub fn begin_update(&mut self) {
+        crate::profiling::event_task_update_begin(self.component_id);
         self.component_id = abi::UPDATE_TEMP_ID;
         self.generation = 0;
         crate::arch::mark_task_update(self);
@@ -441,6 +442,7 @@ impl Task {
             None => self.generation = 0,
         }
         self.update_since = None;
+        crate::profiling::event_task_update_end(self.component_id);
     }
 
     /// Returns a reference to the `TaskDesc` that was used to initially create

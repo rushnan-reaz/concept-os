@@ -176,3 +176,68 @@ fn faithful_fuzz_random_forbidden() {
         check(&old, &new, &forbidden);
     }
 }
+
+/// Larger-scale deterministic fuzz for Tier 3 item 3(a) (`MEASUREMENT_PROGRAM.md`
+/// -- "report the existing 2,500 fuzz round-trips CRC-match rate"). Same
+/// invariants as `faithful_fuzz_random_forbidden`, but 2500 iterations across
+/// a wider size range and both size-preserving and size-changing edits, closer
+/// to the real churn-variant shapes exercised on-device (Task E).
+#[test]
+fn faithful_fuzz_2500_round_trips() {
+    let mut state: u64 = 0xdead_beef_cafe_f00d;
+    let mut rng = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+
+    for iter in 0..2500 {
+        let len = 100 + (rng() as usize % 8000);
+        let old: Vec<u8> = (0..len).map(|_| (rng() & 0xFF) as u8).collect();
+
+        // Alternate between size-preserving edits (scattered single bytes)
+        // and size-changing edits (insert/delete a run), matching the two
+        // churn-variant families used on-device.
+        let mut new = old.clone();
+        if iter % 2 == 0 {
+            let edits = 1 + (rng() as usize % 20);
+            for _ in 0..edits {
+                let idx = rng() as usize % new.len();
+                new[idx] = (rng() & 0xFF) as u8;
+            }
+        } else {
+            let run_len = 1 + (rng() as usize % 64);
+            let idx = rng() as usize % new.len();
+            if rng() % 2 == 0 {
+                // Insert a run.
+                let insert: Vec<u8> = (0..run_len).map(|_| (rng() & 0xFF) as u8).collect();
+                new.splice(idx..idx, insert);
+            } else {
+                // Delete a run (bounded so we never underflow).
+                let end = core::cmp::min(idx + run_len, new.len());
+                new.drain(idx..end);
+            }
+        }
+
+        // Non-overlapping forbidden 4-byte words, simulating relocation
+        // sites + a trailer, scaled to the (possibly size-changed) input.
+        let scan_len = core::cmp::min(old.len(), new.len());
+        let mut forbidden: Vec<Range<usize>> = Vec::new();
+        let mut cursor = 0usize;
+        while cursor + 4 <= scan_len {
+            let gap = rng() as usize % 96;
+            cursor += gap;
+            if cursor + 4 > scan_len {
+                break;
+            }
+            forbidden.push(cursor..cursor + 4);
+            cursor += 4;
+            if forbidden.len() >= 24 {
+                break;
+            }
+        }
+
+        check(&old, &new, &forbidden);
+    }
+}
