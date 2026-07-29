@@ -410,9 +410,17 @@ fn flash_delta_component(
         channel_read(channel_in_consumer, &mut req);
         match req[0] {
             x if x == ComponentUpdateCommand::SendNextFragment as u8 => {
+                // Read these before get_next_fragment() advances the packet's
+                // internal position, mirroring the full-component path above.
+                let frag_num = pkt.get_next_fragment_number();
+                let frag_total = pkt.get_total_fragments();
                 match pkt.get_next_fragment() {
                     Some(fragment) => {
-                        progress.message("Patch   ");
+                        progress.message(&format!(
+                            "Patch Fragment {}/{}   ",
+                            frag_num.unwrap_or(0),
+                            frag_total
+                        ));
                         let data_len = fragment.len() - 1;
                         channel_write(channel_out_producer, &fragment);
                         progress.add(data_len as u64);
