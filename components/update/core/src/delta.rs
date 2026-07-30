@@ -20,6 +20,7 @@
 //! 5. Send Success; `load_component`.
 
 use crate::consts::PACKET_BUFFER_SIZE;
+use crate::markers::Marker;
 use crate::messages::*;
 use crate::update::{ChecksumBuff, UpdateMethods, UpdateRelocator};
 use crate::utils::{channel_ask, channel_write_single, wrap_hbf_error, FlashReader};
@@ -40,7 +41,6 @@ pub fn component_add_delta_update(channel: &mut UartChannel) -> Result<(), Messa
     // One-time GPIOC setup for the phase markers (no-op unless `profiling`).
     // Runs before any marker is raised, so its cost is outside every phase.
     crate::markers::markers_init();
-    use crate::markers::Marker;
 
     // PC0: pull + validate the delta header.
     let header = {
@@ -94,7 +94,17 @@ pub fn component_add_delta_update(channel: &mut UartChannel) -> Result<(), Messa
     // Success must be sent BEFORE load_component, which can preempt this task.
     channel_write_single(channel, ComponentUpdateResponse::Success as u8)?;
     sys_log!("[UPDATE][delta] success, loading component @ {:#010x}", final_base);
-    if !userlib::kipc::load_component(final_base) {
+    // PC4 (phase 4, revived): brackets only the load_component() call itself,
+    // matching bthermo-performance's INSTALL marker exactly (see
+    // components/update/core/src/update.rs on that branch: `markers::set(INSTALL)`
+    // / `load_component(...)` / `markers::clear(INSTALL)` -- not the preceding
+    // Success response). This is the direct INSTALL-equivalent for cross-branch
+    // comparison.
+    let loaded = {
+        let _m = Marker::new(4);
+        userlib::kipc::load_component(final_base)
+    };
+    if !loaded {
         sys_log!("[UPDATE][delta] load_component failed");
     }
     Ok(())
@@ -563,6 +573,18 @@ fn reconstruct_into_final(
     let payload_size = wrap_hbf_error(final_hbf.payload_size())?;
 
     // --- Stage 3: payload, relocated in the same pass -----------------------
+    // PC7 (phase 5, revived): brackets exactly this stage -- relocate + flush
+    // of the payload only -- matching bthermo-performance's RELOC marker,
+    // which nests the same "relocate + flash-write" span inside its own
+    // payload loop (see update.rs on that branch:
+    // `markers::set(RELOC)` / `relocator.consume_current_buffer(...)` /
+    // `markers::clear(RELOC)`, repeated per chunk and once more for
+    // `relocator.finish`). Bracketing the whole stage here (one set/clear
+    // around the loop + finish, not per-chunk) reports the same nested span
+    // as one contiguous pulse rather than as bursts; RELOC_total on the
+    // baseline side is itself already a *sum* of per-chunk pulses, so the
+    // comparable number is this marker's total high-time either way.
+    let _m_reloc = Marker::new(5);
     let mut new_checksum = validation_checksum;
     let new_flash_base_address: u32 = final_alloc.flash_base_address + 8 + payload_offset;
     let mut relocator =
@@ -613,6 +635,7 @@ fn reconstruct_into_final(
     relocator
         .finish(&mut reloc_methods, &mut checksum_buff)
         .map_err(|_| MessageError::FlashError)?;
+    drop(_m_reloc); // Stage 3 ends here -- do not let phase 5 bleed into Stage 4.
 
     // --- Stage 4: trailer (HbfTrailer, HBF_TRAILER_SIZE bytes) --------------
     // Unlike the full-component path (where the trailer is a separate wire

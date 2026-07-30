@@ -16,8 +16,15 @@
 //! last silently wins, making phases 0/1 unreliable to capture. Phases 0
 //! (header pull) and 1 (find base) are remapped to PC5/PC6 (free, no other
 //! component in this app uses them) to avoid that collision entirely; phases
-//! 2 (masked base-CRC), 3 (reconstruct), 4 (install) keep PC2/PC3/PC4. Phase
-//! 5 (scratch flash allocation) uses PC7, also free.
+//! 2 (masked base-CRC) and 3 (reconstruct+install) keep PC2/PC3. Phases 4 and
+//! 5 originally bracketed the pre-single-write-redesign "install" and
+//! "scratch flash allocation" steps (now folded into phase 3) and went
+//! unused for a time; they have since been revived as the baseline-comparable
+//! INSTALL-equivalent (phase 4, PC4: brackets only the `load_component()`
+//! call, matching bthermo-performance's own INSTALL marker exactly) and
+//! RELOC_total-equivalent (phase 5, PC7: brackets Stage 3's relocate+flush
+//! span in `reconstruct_into_final`, matching bthermo-performance's RELOC
+//! marker) -- see `delta.rs` for both.
 //!
 //! Gated behind the `profiling` feature — production builds compile the no-op
 //! stubs and pull in none of the GPIO/rcc dependencies.

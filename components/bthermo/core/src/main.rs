@@ -4,6 +4,7 @@
 mod ds3231;
 mod history;
 mod i2c;
+mod markers;
 mod outputs;
 mod programs;
 mod state;
@@ -26,13 +27,18 @@ const SLEEP_MAX_TIME_MS: u64 = 500;
 
 #[export_name = "main"]
 fn main() -> ! {
+    // Init the migration marker FIRST so PB14 is configured before get_state.
+    markers::init();
+
     // Prepare for state migration
     let mut transfer_buffer: [u8; core::mem::size_of::<TransferableState>()] =
         [0x00; core::mem::size_of::<TransferableState>()];
     let mut prev_state: Option<&TransferableState> = None;
+    markers::set(markers::MIGRATE);
     let transfer_result = hl::get_state(&mut transfer_buffer, (), |_, data: &TransferableState| {
         prev_state = Some(data);
     });
+    markers::clear(markers::MIGRATE);
 
     // Create a safe instance of the RCC
     let mut rcc = rcc_api::RCC::new();
