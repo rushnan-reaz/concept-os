@@ -23,26 +23,6 @@ macro_rules! timed_loop {
     }};
 }
 
-// ===== TEMPORARY DIAGNOSTIC (fix_i2c_sensor_bus_task.md Phase 1) — remove in Phase 3 =====
-// Same as `timed_loop!`, but logs the ISR state under `$tag` before returning Err.
-macro_rules! timed_loop_log {
-    ($self:expr, $tag:expr, $condition:expr) => {{
-        let mut success: bool = false;
-        for _ in 0..(RUNS_PER_US * TIMED_LOOP_US) {
-            cortex_m::asm::nop();
-            if $condition {
-                success = true;
-                break;
-            }
-        }
-        if !success {
-            $self.log_i2c_state($tag);
-            return Err(());
-        }
-    }};
-}
-// ===== END DIAGNOSTIC =====
-
 /**
  * Pinout:
  *      A5 -> PC0 -> I2C3_SCL
@@ -209,8 +189,7 @@ impl<'a> I2C_Channel<'a> {
         // Wait for data
         let mut curr_pos: usize = 0;
         while curr_pos < data.len() {
-            // TEMPORARY DIAGNOSTIC: timed_loop_log! instead of timed_loop! — remove in Phase 3
-            timed_loop_log!(self, "mem_read_rxne", self.i2c1.isr.read().rxne().bit_is_set());
+            timed_loop!(self.i2c1.isr.read().rxne().bit_is_set());
             let byte = (self.i2c1.rxdr.read().bits() & 0xFF) as u8;
             data[curr_pos] = byte;
             curr_pos += 1;
@@ -244,15 +223,14 @@ impl<'a> I2C_Channel<'a> {
 
         // Start by sending the register address
         // Wait to be ready
-        // TEMPORARY DIAGNOSTIC: timed_loop_log! instead of timed_loop! — remove in Phase 3
-        timed_loop_log!(self, "mem_write_txis_addr", self.i2c1.isr.read().txis().is_empty());
+        timed_loop!(self.i2c1.isr.read().txis().is_empty());
         // Put address on the tx reg
         self.i2c1.txdr.write(|w| w.txdata().bits(mem_address));
 
         let mut curr_pos: usize = 0;
         while curr_pos < data.len() {
             // Wait to be ready
-            timed_loop_log!(self, "mem_write_txis_data", self.i2c1.isr.read().txis().is_empty());
+            timed_loop!(self.i2c1.isr.read().txis().is_empty());
             // Put address on the tx reg
             self.i2c1.txdr.write(|w| w.txdata().bits(data[curr_pos]));
             curr_pos += 1;
@@ -310,8 +288,6 @@ impl<'a> I2C_Channel<'a> {
             cortex_m::asm::nop();
             let isr = self.i2c1.isr.read();
             if isr.nackf().bit_is_set() {
-                // TEMPORARY DIAGNOSTIC line — remove in Phase 3
-                self.log_i2c_state("select_register_nack");
                 // ES0250 §2.20.9 workaround (see pe_toggle_recover) instead
                 // of forcing a manual STOP.
                 self.pe_toggle_recover();
@@ -322,29 +298,9 @@ impl<'a> I2C_Channel<'a> {
             }
         }
         // Timed out without ever seeing the condition or a NACK.
-        // TEMPORARY DIAGNOSTIC line — remove in Phase 3
-        self.log_i2c_state("select_register_timeout");
         self.recover_after_failure();
         Err(())
     }
-
-    // ===== TEMPORARY DIAGNOSTIC (fix_i2c_sensor_bus_task.md Phase 1) — remove in Phase 3 =====
-    fn log_i2c_state(&self, tag: &str) {
-        let isr = self.i2c1.isr.read();
-        sys_log!(
-            "[I2C {}] nackf={} berr={} arlo={} txis={} rxne={} tc={} stopf={} busy={}",
-            tag,
-            isr.nackf().bit_is_set(),
-            isr.berr().bit_is_set(),
-            isr.arlo().bit_is_set(),
-            isr.txis().bit_is_set(),
-            isr.rxne().bit_is_set(),
-            isr.tc().bit_is_set(),
-            isr.stopf().bit_is_set(),
-            isr.busy().bit_is_set(),
-        );
-    }
-    // ===== END DIAGNOSTIC =====
 
     /// Force a STOP condition and clear NACKF/STOPF so a failed/timed-out
     /// transaction never leaves the bus held for the next transaction.
