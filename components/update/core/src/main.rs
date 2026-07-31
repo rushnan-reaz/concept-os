@@ -34,6 +34,13 @@ fn main() -> ! {
     }
     // Then activate
     kipc::activate_task();
+    // One-time GPIOC setup for the delta-path phase markers (no-op unless
+    // the `profiling` feature is on). Deliberately done here, at startup,
+    // rather than at the top of a delta update -- gives PC5 (phase 0,
+    // header_pull) a long, stable low period before it's ever driven high,
+    // so the real header_pull rising edge is unambiguous instead of merging
+    // with whatever the pin was doing while floating since board reset.
+    markers::markers_init();
     // Immediately set the handler
     kipc::set_update_support(true);
     // Listen for the initial packet on serial

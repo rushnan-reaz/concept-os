@@ -38,9 +38,15 @@ use crate::consts::{BUFF_SIZE, LINKED_FLASH_BASE, LINKED_SRAM_BASE, RELOC_BUFF_S
 /// Entry point for a delta component update. The caller has already pulled and
 /// validated the outer fixed header and confirmed `IS_DELTA` is set.
 pub fn component_add_delta_update(channel: &mut UartChannel) -> Result<(), MessageError> {
-    // One-time GPIOC setup for the phase markers (no-op unless `profiling`).
-    // Runs before any marker is raised, so its cost is outside every phase.
-    crate::markers::markers_init();
+    // GPIOC marker setup now happens once at component startup (main.rs),
+    // not here. It used to run as the very first statement of this
+    // function, immediately before `Marker::new(0)` -- close enough (a
+    // handful of instructions) that the low-then-high transition could
+    // land inside a single 2 MHz sample period and disappear, merging
+    // whatever the pin was doing before init (floating, from board reset)
+    // invisibly into the start of the phase-0 (header_pull) pulse. Moving
+    // init to component startup gives PC5 a long, stable low period before
+    // phase 0 ever fires, so that transition is unambiguous.
 
     // PC0: pull + validate the delta header.
     let header = {
