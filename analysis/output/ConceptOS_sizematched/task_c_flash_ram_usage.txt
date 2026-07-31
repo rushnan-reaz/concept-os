@@ -1,0 +1,42 @@
+Task C (flash/RAM usage) — SIZE-MATCHED bthermo-performance re-measurement
+============================================================================
+REDO 2026-07-31: original run of this measurement was lost with the
+non-worktree checkout directory (see BT_9600/summary.txt for full context).
+Redone directly in the main `concept-os` checkout, branch
+`bthermo-performance`.
+
+bthermo (component id=10), steady-state, confirmed via
+`update-tool-mqtt ... info` on the live board (matches across all three
+operating-point batches -- VCP@9600, VCP@115200, BT@9600 -- run in this
+session):
+  Version: 1 or 2 (component churn during OTA testing)
+  Flash: 8152 B (actual compiled+relocated component image size)
+  RAM:   4096 B (declared min_ram in Component.toml)
+  Status: HBF_VALID
+
+Block allocation (flash region reserved by the system builder for this
+component, distinct from the component's actual compiled size),
+confirmed via the system_builder allocation log line seen repeatedly
+across this session's builds:
+  Allocated component 10 at flash: 0x0800a000 [size: 8192], ram: 0x20002000 [size: 4096]
+
+Block size = 8192 B, matching delta-performance's own bthermo block size
+exactly (both branches now build bthermo from the same source: 8 sys_log!
+diagnostic calls and an I2C bus-scan loop removed, TMP117 driver swapped
+for TMP102). This was the entire point of the size-matching fix
+(commit aca9e62 "Shrink bthermo to match delta-performance component
+size") -- before the fix, bthermo-performance's own bthermo compiled to
+~9424 B needing a 16384 B block, an apples-to-oranges comparison against
+delta-performance's genuinely smaller bthermo.
+
+Peak transient flash usage during an OTA push: 2x the block size
+(16384 B) while both the old and new component images briefly coexist in
+flash during the atomic-swap window -- unchanged by the size-matching fix
+since it depends on block size, not on the arithmetic average component
+size.
+
+For reference, component 5 ("update", the component that performs
+MIGRATE/RELOC) remains unaffected by the bthermo size-matching change and
+is allocated flash 0x08014000 [size: 16384], ram: 0x20003800 [size: 2048]
+-- confirmed unchanged in this session's build logs, consistent with
+Task D2's stable breakpoint address.

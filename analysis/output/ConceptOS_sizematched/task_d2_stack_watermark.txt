@@ -1,0 +1,59 @@
+Task D2 (peak stack watermark) — SIZE-MATCHED bthermo-performance re-measurement
+==================================================================================
+REDO 2026-07-31: original run of this measurement was lost with the
+non-worktree checkout directory (see BT_9600/summary.txt for full context).
+Redone directly in the main `concept-os` checkout, branch
+`bthermo-performance`.
+
+Methodology: the update component (component id=5, "update") is the code
+that performs MIGRATE/RELOC during a component update, so its own RAM
+region is what's measured. Component 5 is allocated at flash 0x08014000
+[size 16384], ram 0x20003800 [size 2048] -- confirmed via the
+system_builder allocation log line during this session's App.vcp.toml
+build:
+  Allocated component 5 at flash: 0x08014000 [size: 16384], ram: 0x20003800 [size: 2048]
+
+`main`'s offset inside the standalone update-component build was
+confirmed via `arm-none-eabi-objdump -t components/update/core/build/stm32l476rg/image.elf`:
+  08000750 g F .text 00001104 main
+Breakpoint address = relocated base (0x08014138, from the reused
+system_builder DEBUG print, unchanged since a prior session) + offset
+(0x750) = 0x08014888 -- confirmed STABLE, identical to the pre-loss
+measurement (update component source has not changed).
+
+Procedure:
+1. Flash the VCP-config base image (App.vcp.toml -> uart2-channel @ 9600),
+   mass-erase first.
+2. GDB (gdb-multiarch) attach via OpenOCD :3333, `monitor reset halt`,
+   `break *0x08014888`, `continue` (halts before update-component work
+   for the pending push begins).
+3. Discovered during this redo: the kernel/component loader fills a
+   freshly-relocated component's RAM region with a 0xAB repeating byte
+   pattern as part of normal component (re)initialization -- this fill
+   IS the mechanism the watermark measurement relies on. An earlier
+   manual attempt to paint the region with a 0xAA sentinel via GDB before
+   resuming was silently overwritten by this same kernel fill, which
+   happens on every component load/relocation, not just once at power-on.
+   No manual painting is actually necessary -- the kernel does it as part
+   of the update it's about to perform.
+4. Detach, resume via telnet (`resume`) so the target continues normally.
+5. Push a real v2 bthermo update over the VCP MQTT bridge to exercise the
+   update component's MIGRATE/RELOC work.
+6. Halt via OpenOCD and `dump_image` the same 2048 B region
+   (0x20003800-0x20003fff).
+7. Scan from the low address upward for the first 32-bit word that is not
+   0xABABABAB -- everything below that offset is untouched (never used by
+   the stack), everything from that offset to the top of the 2048 B
+   region is the contiguous peak stack usage (stack grows down from the
+   top of its allocated RAM region).
+
+Result:
+  first non-fill (0xAB) word offset from low end: 464 bytes untouched
+  peak stack watermark: 2048 - 464 = 1584 bytes used
+  percent of allocated stack used: 1584 / 2048 = 77.3%
+
+**Matches the pre-loss measurement exactly** (1584/2048 bytes, 77.3%),
+confirming D2 is stable and does not depend on payload size (bthermo's
+size-matching change does not touch the update component's own stack
+usage, which is architecturally expected -- the update component's own
+code and call depth are unchanged by the target component being updated).
