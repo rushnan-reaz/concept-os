@@ -1,0 +1,66 @@
+Task A + B1/B2 (SIZE-MATCHED bthermo-performance re-measurement) — VCP@9600, n=5
+============================================================================
+REDO 2026-07-31: original run of this measurement was lost when the
+separate git-worktree directory it was captured in disappeared before
+being committed anywhere (analysis/output/ is gitignored, and that
+directory was never a real git worktree of this repo -- confirmed via
+`git worktree list`). This redo is captured directly in the main
+`concept-os` checkout (already on branch `bthermo-performance`, commit
+aca9e62 "Shrink bthermo to match delta-performance component size" --
+the actual source fix survived, only the measurement data was lost) and
+committed immediately after capture to prevent recurrence.
+
+bthermo on this branch was ported to match delta-performance's own
+bthermo source exactly in size (removed 8 sys_log! diagnostic calls + an
+I2C bus-scan loop, swapped TMP117 for TMP102). Block size confirmed
+8192 B (was 16384 B before the port), matching delta-performance exactly.
+
+Each run includes a full chip mass-erase (`stm32l4x mass_erase 0` via
+OpenOCD) before the base-image reflash, to eliminate a leftover-flash-
+state artifact (page-erase counts vary run-to-run otherwise, since a
+base-image reflash via ST-Link only erases the address range the base
+ihex covers, not the separate flash region where OTA-pushed blocks land).
+
+Wiring: D2=PB2(RECV), D3=PB1(INSTALL), D4=PB14(MIGRATE), D5=PB15(RELOC),
+D6=PB0(B1), D7=PB7(B2). Verified via a sanity-check push before the full
+5-run batch (numbers matched the pre-loss measurement closely).
+
+--- Task A (phase timing) ---------------------------------------------------
+
+run    | ok  |   RECV    | INSTALL  | MIGRATE  | RELOC_tot  | RELOC_n
+-------|-----|-----------|----------|----------|------------|--------
+run01  | yes | 12.3726s  | 624.5us  | 190.0us  | 89.619ms   |   89
+run02  | yes | 12.4125s  | 618.0us  | 190.0us  | 89.624ms   |   89
+run03  | yes | 12.3956s  | 618.5us  | 196.0us  | 89.596ms   |   89
+run04  | yes | 12.5161s  | 618.5us  | 196.5us  | 89.620ms   |   89
+run05  | yes | 12.4567s  | 624.5us  | 189.5us  | 89.623ms   |   89
+
+mean +/- sd over 5 complete runs:
+  RECV        12.4307s +/- 56.813ms  (CV 0.5%, n=5)
+  INSTALL     620.8us  +/-  3.4us    (CV 0.5%, n=5)
+  MIGRATE     192.4us  +/-  3.5us    (CV 1.8%, n=5)
+  RELOC_total 89.616ms +/- 11.9us    (CV 0.0%, n=5)
+  RELOC_n     89.0 (min 89, max 89)
+
+RELOC_n = 89, matching the pre-loss measurement exactly (same size-matched
+component, same relocation count).
+
+--- B1/B2 (kernel unavailability) -------------------------------------------
+
+run    | B1 duration | B2 count | B2 total  | B2 per-erase
+-------|-------------|----------|-----------|----------------------------
+run01  |   894.5us   |    4     | 87.82ms   | [21954.5,21955.5,21952.5,21957.0]us
+run02  |   895.0us   |    4     | 87.83ms   | [21957.0,21954.0,21957.5,21959.0]us
+run03  |   895.0us   |    4     | 87.83ms   | [21957.0,21960.0,21960.0,21957.5]us
+run04  |   896.0us   |    4     | 87.84ms   | [21958.5,21959.0,21958.0,21964.0]us
+run05  |   895.0us   |    4     | 87.83ms   | [21956.5,21955.0,21961.0,21959.5]us
+
+mean: B1 = 895.1 +/- 0.55 us (n=5)
+      B2 = 4 erases every run (n=5, no variance) at ~87.83ms total,
+           ~21.96ms per erase
+
+**Confirms the size-matching finding**: B2 is exactly 4 erases every run,
+matching delta-performance's own B2 figures (4 erases, 87.8224-87.8282ms
+across all 3 of its operating points) almost exactly. B1 (895.1us) also
+matches delta-performance's own B1 figures (~893-895us) closely --
+transport-independent kernel work, as architecturally expected.
