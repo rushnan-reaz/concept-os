@@ -1,0 +1,66 @@
+Task A + B1/B2 (SIZE-MATCHED bthermo-performance re-measurement) — BT@9600, n=5
+============================================================================
+REDO 2026-07-31: see VCP_9600/summary.txt for the full context on why this
+was redone (original lost with a non-worktree checkout directory that
+vanished before being committed). Captured directly in the main
+`concept-os` checkout, committed immediately after capture.
+
+Transport: Bluetooth Classic rfcomm (SPP), 9600 baud, via uart3-channel /
+app/bthermo/App.toml (Bluetooth config, distinct from App.vcp.toml used
+for the VCP_9600/VCP_115200 batches).
+
+Each run includes a full chip mass-erase (`stm32l4x mass_erase 0` via
+OpenOCD) before the base-image reflash, same methodology as VCP_9600/
+VCP_115200. The base App.ihex was rebuilt fresh for this batch (app-level
+`make build` in app/bthermo) after confirming the bthermo Component.toml
+was reset to version=1, then reflashed via a one-shot OpenOCD
+mass_erase+program+verify+reset invocation before each run.
+
+Wiring: D2=PB2(RECV), D3=PB1(INSTALL), D4=PB14(MIGRATE), D5=PB15(RELOC),
+D6=PB0(B1), D7=PB7(B2).
+
+--- Task A (phase timing) ---------------------------------------------------
+
+run    | ok  |   RECV    | INSTALL  | MIGRATE  | RELOC_tot  | RELOC_n
+-------|-----|-----------|----------|----------|------------|--------
+run01  | yes | 18.1685s  | 618.5us  | 196.0us  | 89.706ms   |   89
+run02  | yes | 18.1329s  | 618.5us  | 189.5us  | 89.431ms   |   89
+run03  | yes | 18.1688s  | 619.0us  | 196.0us  | 89.783ms   |   89
+run04  | yes | 18.1328s  | 624.5us  | 189.5us  | 89.877ms   |   89
+run05  | yes | 18.2535s  | 618.0us  | 190.0us  | 89.445ms   |   89
+
+mean +/- sd over 5 complete runs:
+  RECV        18.1713s +/- 49.301ms  (CV 0.3%, n=5)
+  INSTALL     619.7us  +/-  2.7us    (CV 0.4%, n=5)
+  MIGRATE     192.2us  +/-  3.5us    (CV 1.8%, n=5)
+  RELOC_total 89.648ms +/-  201.3us  (CV 0.2%, n=5)
+  RELOC_n     89.0 (min 89, max 89)
+
+RECV is slowest of the 3 operating points (~18.17s vs ~12.43s VCP@9600 vs
+~7.68s VCP@115200) due to Bluetooth SPP overhead on top of the same 9600
+baud, as expected. INSTALL, MIGRATE, and RELOC_total are within noise of
+both VCP figures -- pure kernel/on-device work, transport-independent.
+RELOC_n = 89, matching both VCP operating points exactly.
+
+--- B1/B2 (kernel unavailability) -------------------------------------------
+
+run    | B1 duration | B2 count | B2 total  | B2 per-erase
+-------|-------------|----------|-----------|----------------------------
+run01  |   894.5us   |    4     | 87.83ms   | [21955.0,21959.0,21956.5,21960.5]us
+run02  |   894.5us   |    4     | 87.83ms   | [21954.5,21958.0,21960.0,21961.5]us
+run03  |   895.0us   |    4     | 87.84ms   | [21958.0,21961.0,21959.5,21958.0]us
+run04  |   895.0us   |    4     | 87.83ms   | [21957.0,21958.5,21959.0,21952.5]us
+run05  |   894.5us   |    4     | 87.83ms   | [21954.5,21958.5,21957.0,21958.0]us
+
+mean: B1 = 894.7 +/- 0.27 us (n=5)
+      B2 = 4 erases every run (n=5, no variance) at ~87.83ms total,
+           ~21.96ms per erase
+
+**Confirms the size-matching finding a third time, across all 3 operating
+points**: B2 is exactly 4 erases every run, matching VCP_9600 (4 erases,
+~87.83ms), VCP_115200 (4 erases, ~87.83ms), and delta-performance's own B2
+figures (4 erases, 87.8224-87.8282ms) closely. B1 (894.7us) also matches
+VCP_9600 (895.1us), VCP_115200 (895.1us), and delta-performance's own B1
+figures (~893-895us) essentially exactly -- fully transport-independent
+kernel work, as architecturally expected. B1/B2 do not depend on transport
+or baud rate, only on the (now size-matched) component/flash geometry.
