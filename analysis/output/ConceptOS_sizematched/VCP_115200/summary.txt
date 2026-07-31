@@ -1,0 +1,60 @@
+Task A + B1/B2 (SIZE-MATCHED bthermo-performance re-measurement) — VCP@115200, n=5
+============================================================================
+REDO 2026-07-31: see VCP_9600/summary.txt for the full context on why this
+was redone (original lost with a non-worktree checkout directory that
+vanished before being committed). Captured directly in the main
+`concept-os` checkout, committed immediately after capture.
+
+uart2-channel's hardcoded BAUDRATE was temporarily bumped 9600->115200
+for this batch only, then reverted to 9600 immediately after (this branch
+has no baud feature flag -- the constant is edited directly and restored,
+confirmed reverted via grep after the batch).
+
+Each run includes a full chip mass-erase before the base-image reflash,
+same methodology as VCP_9600.
+
+Wiring: D2=PB2(RECV), D3=PB1(INSTALL), D4=PB14(MIGRATE), D5=PB15(RELOC),
+D6=PB0(B1), D7=PB7(B2).
+
+--- Task A (phase timing) ---------------------------------------------------
+
+run    | ok  |   RECV    | INSTALL  | MIGRATE  | RELOC_tot  | RELOC_n
+-------|-----|-----------|----------|----------|------------|--------
+run01  | yes | 7.7227s   | 624.5us  | 189.5us  | 92.188ms   |   89
+run02  | yes | 7.6063s   | 624.0us  | 190.0us  | 92.350ms   |   89
+run03  | yes | 7.7224s   | 625.0us  | 190.0us  | 90.341ms   |   89
+run04  | yes | 7.7331s   | 624.0us  | 190.0us  | 91.085ms   |   89
+run05  | yes | 7.6038s   | 624.5us  | 190.0us  | 92.136ms   |   89
+
+mean +/- sd over 5 complete runs:
+  RECV        7.6777s  +/- 66.416ms  (CV 0.9%, n=5)
+  INSTALL     624.4us  +/-  0.4us    (CV 0.1%, n=5)
+  MIGRATE     189.9us  +/-  0.2us    (CV 0.1%, n=5)
+  RELOC_total 91.620ms +/- 872.2us   (CV 1.0%, n=5)
+  RELOC_n     89.0 (min 89, max 89)
+
+RECV is faster than VCP@9600 (~7.68s vs ~12.43s), as expected at the
+higher baud. INSTALL, MIGRATE, and RELOC_total are within noise of the
+VCP@9600 figures -- pure kernel/on-device work, transport-independent.
+RELOC_n = 89, matching VCP@9600 exactly.
+
+--- B1/B2 (kernel unavailability) -------------------------------------------
+
+run    | B1 duration | B2 count | B2 total  | B2 per-erase
+-------|-------------|----------|-----------|----------------------------
+run01  |   894.5us   |    4     | 87.84ms   | [21957.5,21960.5,21960.0,21962.5]us
+run02  |   895.5us   |    4     | 87.83ms   | [21955.0,21958.5,21956.5,21958.0]us
+run03  |   894.5us   |    4     | 87.83ms   | [21955.5,21957.0,21960.0,21962.0]us
+run04  |   895.5us   |    4     | 87.83ms   | [21958.5,21958.0,21959.5,21958.0]us
+run05  |   895.5us   |    4     | 87.84ms   | [21957.5,21961.5,21963.5,21959.0]us
+
+mean: B1 = 895.1 +/- 0.55 us (n=5)
+      B2 = 4 erases every run (n=5, no variance) at ~87.83ms total,
+           ~21.96ms per erase
+
+**Confirms the size-matching finding a second time**: B2 is exactly 4
+erases every run, matching VCP_9600 (4 erases, ~87.83ms) and
+delta-performance's own B2 figures (4 erases, 87.8224-87.8282ms) closely.
+B1 (895.1us) also matches VCP_9600 (895.1us) and delta-performance's own
+B1 figures (~893-895us) essentially exactly -- fully transport-independent
+kernel work, as architecturally expected.
