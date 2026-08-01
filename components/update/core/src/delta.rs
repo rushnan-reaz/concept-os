@@ -11,9 +11,8 @@
 //! 2. Locate the base component in flash by id + version.
 //! 3. Reconstruct the pristine `new.hbf` directly into a single, final flash
 //!    block (COPY reads base flash, ADD pulls literals), relocating the
-//!    payload in the same pass -- no separate scratch block. See
-//!    `reconstruct()` for the three-stage breakdown (prefix / header-tail /
-//!    payload).
+//!    payload in the same pass. See `reconstruct()` for the three-stage
+//!    breakdown (prefix / header-tail / payload).
 //! 4. Verify the reconstructed CRC-32b (delta protocol gate) and the HBF's
 //!    own XOR trailer checksum (kernel-load gate), same as the full-component
 //!    install path.
@@ -88,8 +87,8 @@ pub fn component_add_delta_update(channel: &mut UartChannel) -> Result<(), Messa
     }
 
     // PC3+PC5+PC4 combined: reconstruct directly into a single final block,
-    // relocating the payload as it's written (no scratch, no second copy
-    // pass). See `reconstruct()` for the allocation point (fires partway
+    // relocating the payload as it's written, so each payload byte is written
+    // exactly once. See `reconstruct()` for the allocation point (fires partway
     // through, once the prefix header is known).
     let final_base = {
         let _m = Marker::new(3);
@@ -387,9 +386,8 @@ fn next_chunk(
 }
 
 /// Reconstruct the pristine `new.hbf` directly into a single, final flash
-/// block, relocating the payload in the same pass. No scratch block, no
-/// second copy-with-relocation pass -- this is the whole point of the
-/// single-write redesign (see Tier 2 cost-accounting discussion).
+/// block, relocating the payload in the same pass -- one write of the
+/// component image, and only one (see Tier 2 cost-accounting discussion).
 ///
 /// Three stages, driven by one continuous decoder/reader (via `next_chunk`,
 /// which transparently resumes a partially-consumed action across stage
@@ -527,9 +525,8 @@ fn reconstruct_into_final(
 ) -> Result<(), MessageError> {
     let mut validation_checksum: u32 = 0;
     // `next_chunk`'s boundaries follow the delta encoding's COPY/ADD action
-    // lengths, which are arbitrary (not 4-byte aligned) -- unlike the old
-    // scratch-based code, whose chunking was purely `PACKET_BUFFER_SIZE`-based
-    // and so always 4-byte aligned except at true region ends. Raw
+    // lengths, which are arbitrary and in particular not 4-byte aligned, so
+    // chunks can end mid-word anywhere, not just at true region ends. Raw
     // `update_checksum` zero-pads any trailing partial word on *every* call,
     // which is only correct at a true end -- so accumulate through
     // `ChecksumBuff`, which properly carries a partial word across calls
@@ -651,7 +648,7 @@ fn reconstruct_into_final(
     // (`payload_size()` = `total_size - size_of::<HbfTrailer>() -
     // payload_offset`, confirmed in hbf_lite). Captured directly from the
     // stream rather than read back from flash: not a relocation site, and
-    // (matching the old scratch-based install_core) its original value is
+    // (matching `install_core`) its original value is
     // only needed transiently for the checksum comparison below -- the
     // on-flash copy gets unconditionally overwritten with `new_checksum`
     // afterward regardless, so there is no need to write the pre-relocation

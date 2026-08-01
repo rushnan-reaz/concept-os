@@ -61,7 +61,7 @@ pub struct DeltaHeader {
     pub reconstructed_crc32: u32,
     pub patch_payload_size: u32,
     /// Total size of the reconstructed (target) CBF image in bytes.
-    /// The device uses this to allocate the scratch flash block.
+    /// The device uses this to allocate the final flash block.
     pub target_size: u32,
 }
 

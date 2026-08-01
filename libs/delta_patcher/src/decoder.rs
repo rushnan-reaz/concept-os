@@ -19,8 +19,8 @@
 //!     let n = uart_read(&mut opcode_buf[..]);
 //!     let (action, consumed) = decoder.next_action(&opcode_buf[..n])?;
 //!     match action {
-//!         DecoderAction::Copy { src_offset, len } => { /* read base flash, write scratch */ }
-//!         DecoderAction::Add { len } => { /* read `len` bytes from UART, write scratch */ }
+//!         DecoderAction::Copy { src_offset, len } => { /* read base flash, write target */ }
+//!         DecoderAction::Add { len } => { /* read `len` bytes from UART, write target */ }
 //!         DecoderAction::Done => break,
 //!     }
 //! }

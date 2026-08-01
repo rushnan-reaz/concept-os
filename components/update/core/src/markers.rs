@@ -17,8 +17,8 @@
 //! (header pull) and 1 (find base) are remapped to PC5/PC6 (free, no other
 //! component in this app uses them) to avoid that collision entirely; phases
 //! 2 (masked base-CRC) and 3 (reconstruct+install) keep PC2/PC3. Phases 4 and
-//! 5 originally bracketed the pre-single-write-redesign "install" and
-//! "scratch flash allocation" steps (now folded into phase 3) and went
+//! 5 originally bracketed separate "install" and "flash allocation" steps
+//! (now folded into phase 3) and went
 //! unused for a time; they have since been revived as the baseline-comparable
 //! INSTALL-equivalent (phase 4, PC4: brackets only the `load_component()`
 //! call, matching bthermo-performance's own INSTALL marker exactly) and

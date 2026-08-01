@@ -495,8 +495,8 @@ pub fn component_add_update(channel: &mut UartChannel) -> Result<(), MessageErro
     let needed_ram = wrap_hbf_error(hbf.header_main())?.component_min_ram();
     let checksum_offset = wrap_hbf_error(hbf.checksum_offset())?; // safe call
     // Detect a delta update (IS_DELTA flag in the fixed header).  The delta
-    // path reconstructs the pristine new.hbf into scratch and then reuses this
-    // same install flow, so it is handled entirely in `delta`.
+    // path reconstructs the pristine new.hbf directly into its final flash
+    // block and installs it there, so it is handled entirely in `delta`.
     let is_delta = wrap_hbf_error(hbf.header_main())?
         .component_flags()
         .contains(hbf_lite::ComponentFlags::IS_DELTA);
