@@ -233,6 +233,7 @@ impl<'a> ElfEditor<'a> {
             + 8
             + hbf.read_only_section().offset()
             + flash_allocator::flash::HEADER_SIZE as u32;
+        eprintln!("DEBUG: component {} relocated flash code base: {:#010x}", hbf.header_base().component_id(), new_flash_base_address);
         let new_sram_base_address = alloc_result.sram_address;
         let checksum_offset = hbf.checksum_offset() as usize;
         let mut out_hbf = String::from(self.dest_path.to_str().unwrap());

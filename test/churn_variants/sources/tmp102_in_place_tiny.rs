@@ -11,13 +11,13 @@ use userlib::sys_get_timer;
  *
  * Datasheet: https://www.ti.com/lit/ds/symlink/tmp102.pdf
  */
-const TMP102_ADDR: u8 = 0x48;
+const TMP102_ADDR: u8 = 0x49;
 
 const TMP102_REG_TEMPERATURE: u8 = 0x00;
 const TMP102_REG_CONFIGURATION: u8 = 0x01;
 
 const TMP102_RESOLUTION: f32 = 0.0625_f32;
-const UPDATE_MS: u64 = 1000;
+const UPDATE_MS: u64 = 750;
 
 pub struct TMP102 {
     last_update: u64,
@@ -40,13 +40,13 @@ impl TMP102 {
         // Default power-on config (12-bit, continuous conversion) is already
         // usable as-is; write it back explicitly so behavior doesn't depend
         // on power-on defaults surviving a bus reset.
-        let config_bytes: [u8; 2] = [0x60, 0xA0];
+        let config_bytes: [u8; 2] = [0x60, 0xA8];
         i2c.i2c_mem_write(TMP102_ADDR, TMP102_REG_CONFIGURATION, &config_bytes)
             .map_err(|_| ThermoError::TempNotConnected)
     }
 
     pub fn read_temperature(&mut self, i2c: &mut I2C_Channel) -> Result<f32, ThermoError> {
-        // Avoid reading too often. The temperature updates every ~1 second
+        // Avoid reading too often. The temperature updates roughly every second
         // in the default conversion cycle.
         let now = sys_get_timer().now;
         if now - self.last_update > UPDATE_MS {

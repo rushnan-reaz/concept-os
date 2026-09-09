@@ -11,7 +11,7 @@ use userlib::sys_get_timer;
  *
  * Datasheet: https://www.ti.com/lit/ds/symlink/tmp102.pdf
  */
-const TMP102_ADDR: u8 = 0x48;
+const TMP102_ADDR: u8 = 0x49;
 
 const TMP102_REG_TEMPERATURE: u8 = 0x00;
 const TMP102_REG_CONFIGURATION: u8 = 0x01;

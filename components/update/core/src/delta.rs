@@ -576,18 +576,22 @@ fn reconstruct_into_final(
     let payload_size = wrap_hbf_error(final_hbf.payload_size())?;
 
     // --- Stage 3: payload, relocated in the same pass -----------------------
-    // PC7 (phase 5, revived): brackets exactly this stage -- relocate + flush
-    // of the payload only -- matching bthermo-performance's RELOC marker,
-    // which nests the same "relocate + flash-write" span inside its own
-    // payload loop (see update.rs on that branch:
-    // `markers::set(RELOC)` / `relocator.consume_current_buffer(...)` /
+    // PC7 (phase 5): brackets ONLY `relocator.consume_current_buffer(...)`
+    // per chunk, plus once more around `relocator.finish`, matching
+    // bthermo-performance's RELOC marker exactly (see update.rs on that
+    // branch: `markers::set(RELOC)` / `consume_current_buffer(...)` /
     // `markers::clear(RELOC)`, repeated per chunk and once more for
-    // `relocator.finish`). Bracketing the whole stage here (one set/clear
-    // around the loop + finish, not per-chunk) reports the same nested span
-    // as one contiguous pulse rather than as bursts; RELOC_total on the
-    // baseline side is itself already a *sum* of per-chunk pulses, so the
-    // comparable number is this marker's total high-time either way.
-    let _m_reloc = Marker::new(5);
+    // `relocator.finish`).
+    //
+    // FIX (was a whole-stage bracket around the entire loop + finish):
+    // that version included `next_chunk()`'s wire-blocking wait (ADD
+    // opcodes call `reader.read_into`, which reads off the transport) inside
+    // the "RELOC" measurement, so it scaled with baud rate instead of being
+    // flat CPU work -- verified empirically: 2244 ms @ VCP115200 vs 3821 ms
+    // @ VCP9600 (1.70x), where a true per-chunk CPU-only measurement is
+    // flat (~111 ms at every operating point, see RELOCFIX dataset). The
+    // per-chunk scope below excludes the wire wait, matching the design
+    // intent this comment already claimed.
     let mut new_checksum = validation_checksum;
     let new_flash_base_address: u32 = final_alloc.flash_base_address + 8 + payload_offset;
     let mut relocator =
@@ -624,9 +628,11 @@ fn reconstruct_into_final(
             num_relocations: num_relocations as usize,
             checksum: &mut new_checksum,
         };
+        let _m_reloc = Marker::new(5);
         relocator
             .consume_current_buffer(&tmp[0..n], &mut reloc_methods, &mut checksum_buff)
             .map_err(|_| MessageError::FlashError)?;
+        drop(_m_reloc);
         cursor += n as u32;
     }
     let mut reloc_methods = UpdateRelocator {
@@ -635,6 +641,7 @@ fn reconstruct_into_final(
         num_relocations: num_relocations as usize,
         checksum: &mut new_checksum,
     };
+    let _m_reloc = Marker::new(5);
     relocator
         .finish(&mut reloc_methods, &mut checksum_buff)
         .map_err(|_| MessageError::FlashError)?;

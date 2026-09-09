@@ -11,13 +11,18 @@ use userlib::sys_get_timer;
  *
  * Datasheet: https://www.ti.com/lit/ds/symlink/tmp102.pdf
  */
-const TMP102_ADDR: u8 = 0x48;
+const TMP102_ADDR: u8 = 0x49;
 
 const TMP102_REG_TEMPERATURE: u8 = 0x00;
 const TMP102_REG_CONFIGURATION: u8 = 0x01;
 
 const TMP102_RESOLUTION: f32 = 0.0625_f32;
-const UPDATE_MS: u64 = 1000;
+const UPDATE_MS: u64 = 850;
+/// Fixed calibration offset applied to every raw reading (v_medium change).
+const CALIBRATION_OFFSET_C: f32 = -0.5_f32;
+/// Exponential-moving-average weight for the new sample (v_medium change):
+/// smooths out single-sample sensor noise instead of reporting raw readings.
+const EMA_WEIGHT: f32 = 0.75_f32;
 
 pub struct TMP102 {
     last_update: u64,
@@ -40,7 +45,7 @@ impl TMP102 {
         // Default power-on config (12-bit, continuous conversion) is already
         // usable as-is; write it back explicitly so behavior doesn't depend
         // on power-on defaults surviving a bus reset.
-        let config_bytes: [u8; 2] = [0x60, 0xA0];
+        let config_bytes: [u8; 2] = [0x60, 0xB0];
         i2c.i2c_mem_write(TMP102_ADDR, TMP102_REG_CONFIGURATION, &config_bytes)
             .map_err(|_| ThermoError::TempNotConnected)
     }
@@ -49,12 +54,13 @@ impl TMP102 {
         // Avoid reading too often. The temperature updates every ~1 second
         // in the default conversion cycle.
         let now = sys_get_timer().now;
-        if now - self.last_update > UPDATE_MS {
+        if now - self.last_update >= UPDATE_MS {
             let mut raw_data: [u8; 2] = [0; 2];
             i2c.i2c_mem_read(TMP102_ADDR, TMP102_REG_TEMPERATURE, &mut raw_data)
                 .map_err(|_| ThermoError::TempNotConnected)?;
             let raw_temp = i16::from_be_bytes(raw_data);
-            self.last_temp = ((raw_temp >> 4) as f32) * TMP102_RESOLUTION;
+            let sample = ((raw_temp >> 4) as f32) * TMP102_RESOLUTION + CALIBRATION_OFFSET_C;
+            self.last_temp = EMA_WEIGHT * sample + (1.0 - EMA_WEIGHT) * self.last_temp;
             self.last_update = now;
         }
         return Ok(self.last_temp);

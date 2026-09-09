@@ -8,6 +8,7 @@ import argparse
 import sys
 import re
 import os
+import time
 
 from loguru import logger
 from src.utils.paths import configure_path
@@ -16,6 +17,22 @@ from src.utils.logger import init_logger
 
 from libraries.aio_serial.aio_serial import AIOSerial, AIOSerialNotOpenException, AIOSerialException
 from libraries.mqtt.mqtt_connector import MQTTConnector
+
+# Temporary instrumentation for the header_pull latency-breakdown
+# investigation (thesis Tier-1 item 5, documentation/implementation/
+# tier1_measurement_writeup.md §5). Logs a timestamp at each of the four
+# hops a message crosses between the device UART and the update-tool-mqtt
+# process, so the ~80-168ms header_pull window can be attributed to
+# serial I/O vs MQTT broker/queueing vs update-tool-mqtt's own processing,
+# rather than left as an unexplained total. Zero cost when False (no
+# timestamps taken, no extra log lines). Revert to False once the
+# investigation is written up.
+TIMING_DEBUG = False
+
+
+def _timing_log(hop: str, channel_id, length: int) -> None:
+    if TIMING_DEBUG:
+        logger.debug(f"[TIMING] hop={hop} id={channel_id} len={length} t={time.time():.6f}")
 
 
 async def mqtt_loop(
@@ -35,6 +52,7 @@ async def mqtt_loop(
             return
         try:
             channel_id = int(match.group(1))
+            _timing_log("mqtt_rx", channel_id, len(payload))
             # Add the payload to the output queue
             serial_out_queue.put_nowait({
                 'id': channel_id,
@@ -50,6 +68,7 @@ async def mqtt_loop(
     while True:
         pkt = await mqtt_out_queue.get()
         topic = f"{mqtt_root}/{pkt['id']}/out"
+        _timing_log("mqtt_pub", pkt['id'], len(pkt['data']))
         # Launch publish
         if not mqtt_client.publish(
             topic=topic,
@@ -137,6 +156,7 @@ async def serial_loop(
                         logger.warning("Discarding package for wrong CRC")
                         continue
                     # Otherwise push data
+                    _timing_log("serial_rx", last_channel_id, last_pkt_len)
                     mqtt_out_queue.put_nowait({
                         'id': last_channel_id,
                         'data': in_buffer[:-1]
@@ -177,6 +197,7 @@ async def serial_loop(
             await serial_port.write(pkt['data'])
             # Then write crc8
             await serial_port.write(crc8.to_bytes(1, byteorder='big'))
+            _timing_log("serial_tx_done", pkt['id'], len(pkt['data']))
     # Start tasks
     aio.create_task(_encoder())
     aio.create_task(_decoder())
